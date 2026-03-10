@@ -2,18 +2,21 @@ MESSAGE(STATUS "This is CMAKE_CURRENT_SOURCE_DIR dir " ${CMAKE_CURRENT_SOURCE_DI
 
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR})
 
-find_package(FLEX REQUIRED)
-find_package(BISON REQUIRED)
-
+find_package(FLEX QUIET)
+find_package(BISON QUIET)
 set(PARSER_WORKDIR ${CMAKE_CURRENT_SOURCE_DIR}/sql/parser)
 set(LEXER_SOURCES ${PARSER_WORKDIR}/lex_sql.cpp)
 set(LEXER_HEADERS ${PARSER_WORKDIR}/lex_sql.h)
 set(PARSER_SOURCES ${PARSER_WORKDIR}/yacc_sql.cpp)
 set(PARSER_HEADERS ${PARSER_WORKDIR}/yacc_sql.hpp)
-
-flex_target(lex ${PARSER_WORKDIR}/lex_sql.l "${LEXER_SOURCES}" DEFINES_FILE "${LEXER_HEADERS}")
-bison_target(yacc ${PARSER_WORKDIR}/yacc_sql.y "${PARSER_SOURCES}" DEFINES_FILE "${PARSER_HEADERS}")
-add_flex_bison_dependency(lex yacc)
+if(FLEX_FOUND AND BISON_FOUND)
+  flex_target(lex ${PARSER_WORKDIR}/lex_sql.l "${LEXER_SOURCES}" DEFINES_FILE "${LEXER_HEADERS}")
+  bison_target(yacc ${PARSER_WORKDIR}/yacc_sql.y "${PARSER_SOURCES}" DEFINES_FILE "${PARSER_HEADERS}")
+  add_flex_bison_dependency(lex yacc)
+  MESSAGE(STATUS "Using FLEX/BISON to generate parser")
+else()
+  MESSAGE(STATUS "FLEX/BISON not found; using pre-generated parser sources (e.g. Windows)")
+endif()
 
 FILE(GLOB_RECURSE ALL_SRC *.cpp *.c)
 SET(MAIN_SRC ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)

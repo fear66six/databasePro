@@ -80,6 +80,15 @@ int init_log(ProcessParam *process_cfg, Ini &properties)
 
     log_file_name = getAboslutPath(log_file_name.c_str());
 
+    // 若配置了带目录的日志路径，确保目录存在
+    string log_dir = getFilePath(log_file_name);
+    if (!log_dir.empty() && log_dir != log_file_name) {
+      if (!check_directory(log_dir)) {
+        cerr << "Failed to create log directory: " << log_dir << endl;
+        return -1;
+      }
+    }
+
     LOG_LEVEL log_level = LOG_LEVEL_INFO;
     key                 = ("LOG_FILE_LEVEL");
     it                  = log_section.find(key);

@@ -1,0 +1,8 @@
+### 2026-03-09 15:20:08.811
+create table t1(id int, name char(20));
+### 2026-03-09 15:20:14.336
+insert into t1 values(1, 'Alice');
+### 2026-03-09 15:20:16.341
+insert into t1 values(2, 'Bob');
+### 2026-03-09 15:20:20.966
+select * from t1;

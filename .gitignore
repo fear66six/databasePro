@@ -11,6 +11,7 @@ build
 .cache/*
 .DS_Store
 .idea
+log
 .ccls-cache
 compile_commands.json
 .name
