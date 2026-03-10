@@ -128,6 +128,10 @@ void Value::set_data(char *data, int length)
       value_.bool_value_ = *(int *)data != 0;
       length_            = length;
     } break;
+    case AttrType::DATES: {
+      value_.int_value_ = *(int32_t *)data;
+      length_           = length;
+    } break;
     default: {
       LOG_WARN("unknown data type: %d", attr_type_);
     } break;
@@ -155,6 +159,14 @@ void Value::set_boolean(bool val)
   attr_type_         = AttrType::BOOLEANS;
   value_.bool_value_ = val;
   length_            = sizeof(val);
+}
+
+void Value::set_date(int32_t date_days)
+{
+  reset();
+  attr_type_        = AttrType::DATES;
+  value_.int_value_ = date_days;
+  length_           = sizeof(int32_t);
 }
 
 void Value::set_string(const char *s, int len /*= 0*/)
@@ -206,6 +218,9 @@ void Value::set_value(const Value &value)
     case AttrType::BOOLEANS: {
       set_boolean(value.get_boolean());
     } break;
+    case AttrType::DATES: {
+      set_date(value.get_date());
+    } break;
     default: {
       ASSERT(false, "got an invalid value type");
     } break;
@@ -245,7 +260,19 @@ string Value::to_string() const
   return res;
 }
 
-int Value::compare(const Value &other) const { return DataType::type_instance(this->attr_type_)->compare(*this, other); }
+int Value::compare(const Value &other) const
+{
+  if (attr_type_ == AttrType::DATES && other.attr_type() == AttrType::CHARS) {
+    return DataType::type_instance(AttrType::DATES)->compare(*this, other);
+  }
+  if (attr_type_ == AttrType::CHARS && other.attr_type() == AttrType::DATES) {
+    Value left_date;
+    RC rc = DataType::type_instance(AttrType::DATES)->set_value_from_str(left_date, get_string());
+    if (rc != RC::SUCCESS) return INT32_MAX;
+    return DataType::type_instance(AttrType::DATES)->compare(left_date, other);
+  }
+  return DataType::type_instance(this->attr_type_)->compare(*this, other);
+}
 
 int Value::get_int() const
 {
@@ -266,6 +293,9 @@ int Value::get_int() const
     }
     case AttrType::BOOLEANS: {
       return (int)(value_.bool_value_);
+    }
+    case AttrType::DATES: {
+      return (int)(value_.int_value_);
     }
     default: {
       LOG_WARN("unknown data type. type=%d", attr_type_);
@@ -295,6 +325,9 @@ float Value::get_float() const
     case AttrType::BOOLEANS: {
       return float(value_.bool_value_);
     } break;
+    case AttrType::DATES: {
+      return float(value_.int_value_);
+    } break;
     default: {
       LOG_WARN("unknown data type. type=%d", attr_type_);
       return 0;
@@ -304,6 +337,23 @@ float Value::get_float() const
 }
 
 string Value::get_string() const { return this->to_string(); }
+
+int32_t Value::get_date() const
+{
+  switch (attr_type_) {
+    case AttrType::DATES:
+      return value_.int_value_;
+    case AttrType::CHARS: {
+      Value v;
+      RC rc = DataType::type_instance(AttrType::DATES)->set_value_from_str(v, get_string());
+      if (rc != RC::SUCCESS) return 0;
+      return v.get_date();
+    }
+    default:
+      LOG_WARN("unknown data type for get_date. type=%d", static_cast<int>(attr_type_));
+      return 0;
+  }
+}
 
 string_t Value::get_string_t() const
 {
@@ -341,6 +391,9 @@ bool Value::get_boolean() const
     } break;
     case AttrType::BOOLEANS: {
       return value_.bool_value_;
+    } break;
+    case AttrType::DATES: {
+      return value_.int_value_ != 0;
     } break;
     default: {
       LOG_WARN("unknown data type. type=%d", attr_type_);

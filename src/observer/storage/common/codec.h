@@ -433,6 +433,11 @@ public:
           LOG_WARN("append failed");
         }
         break;
+      case AttrType::DATES:
+        if (OB_FAIL(OrderedCode::append(dst, (int64_t)val.get_date()))) {
+          LOG_WARN("append failed");
+        }
+        break;
       default: return RC::INVALID_ARGUMENT;
     }
     return rc;

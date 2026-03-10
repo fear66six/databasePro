@@ -36,6 +36,7 @@ public:
   friend class BooleanType;
   friend class CharType;
   friend class VectorType;
+  friend class DateType;
 
   Value() = default;
 
@@ -112,6 +113,7 @@ public:
   string   get_string() const;
   string_t get_string_t() const;
   bool     get_boolean() const;
+  int32_t  get_date() const;  ///< DATE: days since 1970-01-01
 
 public:
   void set_int(int val);
@@ -119,6 +121,7 @@ public:
   void set_string(const char *s, int len = 0);
   void set_empty_string(int len);
   void set_string_from_other(const Value &other);
+  void set_date(int32_t date_days);  ///< DATE: days since 1970-01-01
 
 private:
   AttrType attr_type_ = AttrType::UNDEFINED;

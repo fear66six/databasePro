@@ -235,13 +235,34 @@ RC ComparisonExpr::eval(Chunk &chunk, vector<uint8_t> &select)
     return rc;
   }
   if (left_column.attr_type() != right_column.attr_type()) {
-    LOG_WARN("cannot compare columns with different types");
-    return RC::INTERNAL;
+    if (!((left_column.attr_type() == AttrType::DATES && right_column.attr_type() == AttrType::CHARS) ||
+          (left_column.attr_type() == AttrType::CHARS && right_column.attr_type() == AttrType::DATES))) {
+      LOG_WARN("cannot compare columns with different types");
+      return RC::INTERNAL;
+    }
   }
   if (left_column.attr_type() == AttrType::INTS) {
     rc = compare_column<int>(left_column, right_column, select);
   } else if (left_column.attr_type() == AttrType::FLOATS) {
     rc = compare_column<float>(left_column, right_column, select);
+  } else if (left_column.attr_type() == AttrType::DATES || right_column.attr_type() == AttrType::DATES) {
+    int rows = 0;
+    if (left_column.column_type() == Column::Type::CONSTANT_COLUMN) {
+      rows = right_column.count();
+    } else {
+      rows = left_column.count();
+    }
+    for (int i = 0; i < rows; ++i) {
+      Value left_val = left_column.get_value(i);
+      Value right_val = right_column.get_value(i);
+      bool  result    = false;
+      rc               = compare_value(left_val, right_val, result);
+      if (rc != RC::SUCCESS) {
+        LOG_WARN("failed to compare tuple cells. rc=%s", strrc(rc));
+        return rc;
+      }
+      select[i] &= result ? 1 : 0;
+    }
   } else if (left_column.attr_type() == AttrType::CHARS) {
     int rows = 0;
     if (left_column.column_type() == Column::Type::CONSTANT_COLUMN) {
@@ -260,7 +281,6 @@ RC ComparisonExpr::eval(Chunk &chunk, vector<uint8_t> &select)
       }
       select[i] &= result ? 1 : 0;
     }
-
   } else {
     LOG_WARN("unsupported data type %d", left_column.attr_type());
     return RC::INTERNAL;

@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include "condition_filter.h"
 #include "common/log/log.h"
 #include "common/value.h"
+#include "common/type/data_type.h"
 #include "storage/record/record_manager.h"
 #include "storage/table/table.h"
 #include <math.h>
@@ -108,10 +109,41 @@ RC DefaultConditionFilter::init(Table &table, const ConditionSqlNode &condition)
   //    // 不能比较的两个字段， 要把信息传给客户端
   //    return RC::SCHEMA_FIELD_TYPE_MISMATCH;
   //  }
-  // NOTE：这里没有实现不同类型的数据比较，比如整数跟浮点数之间的对比
-  // 但是选手们还是要实现。这个功能在预选赛中会出现
+  // NOTE：这里原来没有实现不同类型的数据比较，比如整数跟浮点数之间的对比。
+  // 这里针对 DATE 与 CHARS 的组合做特殊处理：当字段是 DATE，而常量是字符串时，
+  // 尝试把字符串解析成 DATE；解析失败则认为类型不匹配。
   if (type_left != type_right) {
-    return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+    RC rc = RC::SUCCESS;
+
+    // 左边是字段，右边是常量
+    if (left.is_attr && !right.is_attr && type_left == AttrType::DATES && type_right == AttrType::CHARS) {
+      Value cast_value;
+      rc = DataType::type_instance(AttrType::DATES)->set_value_from_str(cast_value, right.value.get_string());
+      if (OB_FAIL(rc)) {
+        LOG_WARN("failed to cast right value from string to date. value=%s",
+                 right.value.to_string().c_str());
+        return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+      }
+      right.value  = std::move(cast_value);
+      type_right   = AttrType::DATES;
+    }
+    // 右边是字段，左边是常量
+    else if (right.is_attr && !left.is_attr && type_right == AttrType::DATES && type_left == AttrType::CHARS) {
+      Value cast_value;
+      rc = DataType::type_instance(AttrType::DATES)->set_value_from_str(cast_value, left.value.get_string());
+      if (OB_FAIL(rc)) {
+        LOG_WARN("failed to cast left value from string to date. value=%s",
+                 left.value.to_string().c_str());
+        return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+      }
+      left.value = std::move(cast_value);
+      type_left  = AttrType::DATES;
+    }
+
+    // 其他类型组合目前仍然认为不支持
+    if (type_left != type_right) {
+      return RC::SCHEMA_FIELD_TYPE_MISMATCH;
+    }
   }
 
   return init(left, right, type_left, condition.comp);

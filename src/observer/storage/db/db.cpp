@@ -176,6 +176,74 @@ RC Db::create_table(const char *table_name, span<const AttrInfoSqlNode> attribut
   return RC::SUCCESS;
 }
 
+RC Db::drop_table(const char *table_name)
+{
+  if (common::is_blank(table_name)) {
+    LOG_WARN("invalid table name for drop table");
+    return RC::INVALID_ARGUMENT;
+  }
+
+  auto iter = opened_tables_.find(table_name);
+  if (iter == opened_tables_.end()) {
+    LOG_WARN("table not exist. name=%s", table_name);
+    return RC::SCHEMA_TABLE_NOT_EXIST;
+  }
+
+  Table *table = iter->second;
+
+  // 备份元数据需要的信息（索引名等），因为后面要删除 table 对象
+  const TableMeta &table_meta = table->table_meta();
+  vector<string>   index_names;
+  int              index_num = table_meta.index_num();
+  index_names.reserve(index_num);
+  for (int i = 0; i < index_num; i++) {
+    const IndexMeta *index_meta = table_meta.index(i);
+    index_names.emplace_back(index_meta->name());
+  }
+
+  // 从内存中移除并释放 Table 对象（会关闭表相关的引擎、索引等资源）
+  opened_tables_.erase(iter);
+  delete table;
+  table = nullptr;
+
+  // 删除磁盘上的元数据文件、数据文件、索引文件以及 LOB 文件
+  RC rc = RC::SUCCESS;
+
+  string meta_file = table_meta_file(path_.c_str(), table_name);
+  if (filesystem::exists(meta_file) && !filesystem::remove(meta_file)) {
+    LOG_WARN("failed to remove table meta file. file=%s", meta_file.c_str());
+    rc = RC::IOERR_DELETE;
+  }
+
+  string data_file = table_data_file(path_.c_str(), table_name);
+  if (filesystem::exists(data_file) && !filesystem::remove(data_file)) {
+    LOG_WARN("failed to remove table data file. file=%s", data_file.c_str());
+    rc = RC::IOERR_DELETE;
+  }
+
+  string lob_file = table_lob_file(path_.c_str(), table_name);
+  if (filesystem::exists(lob_file) && !filesystem::remove(lob_file)) {
+    LOG_WARN("failed to remove table lob file. file=%s", lob_file.c_str());
+    rc = RC::IOERR_DELETE;
+  }
+
+  for (const string &index_name : index_names) {
+    string index_file = table_index_file(path_.c_str(), table_name, index_name.c_str());
+    if (filesystem::exists(index_file) && !filesystem::remove(index_file)) {
+      LOG_WARN("failed to remove index file. file=%s", index_file.c_str());
+      rc = RC::IOERR_DELETE;
+    }
+  }
+
+  if (OB_FAIL(rc)) {
+    LOG_WARN("drop table encountered io error. table=%s, rc=%s", table_name, strrc(rc));
+    return rc;
+  }
+
+  LOG_INFO("Drop table success. table name=%s", table_name);
+  return RC::SUCCESS;
+}
+
 Table *Db::find_table(const char *table_name) const
 {
   unordered_map<string, Table *>::const_iterator iter = opened_tables_.find(table_name);

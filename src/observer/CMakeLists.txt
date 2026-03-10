@@ -2,21 +2,18 @@ MESSAGE(STATUS "This is CMAKE_CURRENT_SOURCE_DIR dir " ${CMAKE_CURRENT_SOURCE_DI
 
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR})
 
-find_package(FLEX QUIET)
-find_package(BISON QUIET)
+find_package(FLEX REQUIRED)
+find_package(BISON REQUIRED)
+
 set(PARSER_WORKDIR ${CMAKE_CURRENT_SOURCE_DIR}/sql/parser)
 set(LEXER_SOURCES ${PARSER_WORKDIR}/lex_sql.cpp)
 set(LEXER_HEADERS ${PARSER_WORKDIR}/lex_sql.h)
 set(PARSER_SOURCES ${PARSER_WORKDIR}/yacc_sql.cpp)
 set(PARSER_HEADERS ${PARSER_WORKDIR}/yacc_sql.hpp)
-if(FLEX_FOUND AND BISON_FOUND)
-  flex_target(lex ${PARSER_WORKDIR}/lex_sql.l "${LEXER_SOURCES}" DEFINES_FILE "${LEXER_HEADERS}")
-  bison_target(yacc ${PARSER_WORKDIR}/yacc_sql.y "${PARSER_SOURCES}" DEFINES_FILE "${PARSER_HEADERS}")
-  add_flex_bison_dependency(lex yacc)
-  MESSAGE(STATUS "Using FLEX/BISON to generate parser")
-else()
-  MESSAGE(STATUS "FLEX/BISON not found; using pre-generated parser sources (e.g. Windows)")
-endif()
+
+flex_target(lex ${PARSER_WORKDIR}/lex_sql.l "${LEXER_SOURCES}" DEFINES_FILE "${LEXER_HEADERS}")
+bison_target(yacc ${PARSER_WORKDIR}/yacc_sql.y "${PARSER_SOURCES}" DEFINES_FILE "${PARSER_HEADERS}")
+add_flex_bison_dependency(lex yacc)
 
 FILE(GLOB_RECURSE ALL_SRC *.cpp *.c)
 SET(MAIN_SRC ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
@@ -54,6 +51,6 @@ TARGET_LINK_LIBRARIES(observer_static ${LIBRARIES} oblsm)
 # Target 必须在定义 ADD_EXECUTABLE 之后， programs 不受这个限制
 # TARGETS和PROGRAMS 的默认权限是OWNER_EXECUTE, GROUP_EXECUTE, 和WORLD_EXECUTE，即755权限， programs 都是处理脚本类
 # 类型分为RUNTIME／LIBRARY／ARCHIVE, prog
-INSTALL(TARGETS observer observer_static 
+INSTALL(TARGETS observer observer_static
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib)
