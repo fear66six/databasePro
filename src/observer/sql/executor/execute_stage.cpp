@@ -19,6 +19,8 @@ See the Mulan PSL v2 for more details. */
 #include "event/sql_event.h"
 #include "sql/executor/command_executor.h"
 #include "sql/operator/calc_physical_operator.h"
+#include "sql/optimizer/logical_plan_generator.h"
+#include "sql/optimizer/physical_plan_generator.h"
 #include "sql/stmt/select_stmt.h"
 #include "sql/stmt/stmt.h"
 #include "storage/default/default_handler.h"
@@ -29,14 +31,47 @@ RC ExecuteStage::handle_request(SQLStageEvent *sql_event)
 {
   RC rc = RC::SUCCESS;
 
-  const unique_ptr<PhysicalOperator> &physical_operator = sql_event->physical_operator();
+  unique_ptr<PhysicalOperator> &physical_operator = sql_event->physical_operator();
+  Stmt                        *stmt              = sql_event->stmt();
+
+  // UPDATE 始终在 execute 阶段构建物理计划并设置 operator，避免依赖 optimize 阶段
+  //（cascade 未设置 winner 或 RBO 路径差异导致的问题）
+  if (stmt != nullptr && stmt->type() == StmtType::UPDATE) {
+    Session *session = sql_event->session_event()->session();
+    unique_ptr<LogicalOperator> logical_operator;
+    rc = LogicalPlanGenerator().create(stmt, logical_operator);
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to create logical plan for UPDATE. rc=%s", strrc(rc));
+      sql_event->session_event()->sql_result()->set_return_code(rc);
+      return rc;
+    }
+    if (logical_operator == nullptr) {
+      LOG_WARN("logical plan for UPDATE is null");
+      sql_event->session_event()->sql_result()->set_return_code(RC::INTERNAL);
+      return RC::INTERNAL;
+    }
+    unique_ptr<PhysicalOperator> oper;
+    rc = PhysicalPlanGenerator().create(*logical_operator, oper, session);
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to create physical plan for UPDATE. rc=%s", strrc(rc));
+      sql_event->session_event()->sql_result()->set_return_code(rc);
+      return rc;
+    }
+    if (oper == nullptr) {
+      LOG_WARN("physical plan for UPDATE is null");
+      sql_event->session_event()->sql_result()->set_return_code(RC::INTERNAL);
+      return RC::INTERNAL;
+    }
+    sql_event->session_event()->sql_result()->set_operator(std::move(oper));
+    return RC::SUCCESS;
+  }
+
   if (physical_operator != nullptr) {
     return handle_request_with_physical_operator(sql_event);
   }
 
   SessionEvent *session_event = sql_event->session_event();
 
-  Stmt *stmt = sql_event->stmt();
   if (stmt != nullptr) {
     CommandExecutor command_executor;
     rc = command_executor.execute(sql_event);

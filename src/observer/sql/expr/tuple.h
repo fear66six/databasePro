@@ -50,6 +50,7 @@ public:
   void append_cell(const TupleCellSpec &cell) { cells_.push_back(cell); }
   void append_cell(const char *table, const char *field) { append_cell(TupleCellSpec(table, field)); }
   void append_cell(const char *alias) { append_cell(TupleCellSpec(alias)); }
+  void clear() { cells_.clear(); }
   int  cell_num() const { return static_cast<int>(cells_.size()); }
 
   const TupleCellSpec &cell_at(int i) const { return cells_[i]; }

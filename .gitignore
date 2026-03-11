@@ -11,6 +11,7 @@ build
 .cache/*
 .DS_Store
 .idea
+.obclient.history
 log
 miniob
 .ccls-cache
