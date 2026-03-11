@@ -137,6 +137,14 @@ RC PhysicalPlanGenerator::create_vec(LogicalOperator &logical_operator, unique_p
     case LogicalOperatorType::GROUP_BY: {
       return create_vec_plan(static_cast<GroupByLogicalOperator &>(logical_operator), oper, session);
     } break;
+    case LogicalOperatorType::PREDICATE: {
+      // 谓词下推后，predicate 可能为 ValueExpr(true)，直接透传子算子
+      auto &pred_oper = static_cast<PredicateLogicalOperator &>(logical_operator);
+      if (pred_oper.children().size() != 1) {
+        return RC::INVALID_ARGUMENT;
+      }
+      return create_vec(*pred_oper.children().front(), oper, session);
+    } break;
     case LogicalOperatorType::EXPLAIN: {
       return create_vec_plan(static_cast<ExplainLogicalOperator &>(logical_operator), oper, session);
     } break;

@@ -56,7 +56,51 @@ public:
   template <class U>
   U finalize()
   {
-    return (U)((float)value / (float)count);
+    return (U)(count > 0 ? (float)value / (float)count : 0.0f);
+  }
+};
+
+template <class T>
+class MaxState
+{
+public:
+  MaxState() : has_value(false), value(0) {}
+  bool has_value;
+  T    value;
+  void update(const T *values, int size);
+  void update(const T &v)
+  {
+    if (!has_value || v > value) {
+      value     = v;
+      has_value = true;
+    }
+  }
+  template <class U>
+  U finalize()
+  {
+    return (U)value;
+  }
+};
+
+template <class T>
+class MinState
+{
+public:
+  MinState() : has_value(false), value(0) {}
+  bool has_value;
+  T    value;
+  void update(const T *values, int size);
+  void update(const T &v)
+  {
+    if (!has_value || v < value) {
+      value     = v;
+      has_value = true;
+    }
+  }
+  template <class U>
+  U finalize()
+  {
+    return (U)value;
   }
 };
 

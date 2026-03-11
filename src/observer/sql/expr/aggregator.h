@@ -29,7 +29,45 @@ protected:
   Value value_;
 };
 
+/// @brief 判断 value 是否为 NULL（聚合时跳过）
+static inline bool value_is_null(const Value &v) { return v.attr_type() == AttrType::UNDEFINED; }
+
+class CountAggregator : public Aggregator
+{
+public:
+  RC accumulate(const Value &value) override;
+  RC evaluate(Value &result) override;
+
+private:
+  int count_ = 0;
+};
+
 class SumAggregator : public Aggregator
+{
+public:
+  RC accumulate(const Value &value) override;
+  RC evaluate(Value &result) override;
+};
+
+class AvgAggregator : public Aggregator
+{
+public:
+  RC accumulate(const Value &value) override;
+  RC evaluate(Value &result) override;
+
+private:
+  int   count_ = 0;
+  Value sum_;
+};
+
+class MaxAggregator : public Aggregator
+{
+public:
+  RC accumulate(const Value &value) override;
+  RC evaluate(Value &result) override;
+};
+
+class MinAggregator : public Aggregator
 {
 public:
   RC accumulate(const Value &value) override;

@@ -13,10 +13,29 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include "sql/expr/expression.h"
+#include "sql/expr/expression_iterator.h"
 #include "sql/expr/tuple.h"
 #include "sql/expr/arithmetic_operator.hpp"
+#include "storage/common/column.h"
+#include <functional>
 
 using namespace std;
+
+RC StarExpr::get_value(const Tuple &tuple, Value &value) const
+{
+  // For COUNT(*), return a non-null value so CountAggregator can count each row
+  value.set_int(1);
+  return RC::SUCCESS;
+}
+
+RC StarExpr::get_column(Chunk &chunk, Column &column)
+{
+  // For COUNT(*), provide a column with count = chunk.rows() for aggregate_state_update_by_column
+  Value one;
+  one.set_int(1);
+  column.init(one, chunk.rows());
+  return RC::SUCCESS;
+}
 
 RC FieldExpr::get_value(const Tuple &tuple, Value &value) const
 {
@@ -581,10 +600,29 @@ UnboundAggregateExpr::UnboundAggregateExpr(const char *aggregate_name, unique_pt
 {}
 
 ////////////////////////////////////////////////////////////////////////////////
-AggregateExpr::AggregateExpr(Type type, Expression *child) : aggregate_type_(type), child_(child) {}
+AggregateExpr::AggregateExpr(Type type, Expression *child) : aggregate_type_(type), child_(child)
+{
+  std::function<RC(unique_ptr<Expression> &)> check_has_field;
+  check_has_field = [&check_has_field](unique_ptr<Expression> &expr) -> RC {
+    if (expr->type() == ExprType::FIELD) {
+      return RC::INTERNAL;
+    }
+    return ExpressionIterator::iterate_child_expr(*expr, check_has_field);
+  };
+  param_is_constexpr_ = (RC::SUCCESS == ExpressionIterator::iterate_child_expr(*child_, check_has_field));
+}
 
 AggregateExpr::AggregateExpr(Type type, unique_ptr<Expression> child) : aggregate_type_(type), child_(std::move(child))
-{}
+{
+  std::function<RC(unique_ptr<Expression> &)> check_has_field;
+  check_has_field = [&check_has_field](unique_ptr<Expression> &expr) -> RC {
+    if (expr->type() == ExprType::FIELD) {
+      return RC::INTERNAL;
+    }
+    return ExpressionIterator::iterate_child_expr(*expr, check_has_field);
+  };
+  param_is_constexpr_ = (RC::SUCCESS == ExpressionIterator::iterate_child_expr(*child_, check_has_field));
+}
 
 RC AggregateExpr::get_column(Chunk &chunk, Column &column)
 {
@@ -611,23 +649,31 @@ bool AggregateExpr::equal(const Expression &other) const
 
 unique_ptr<Aggregator> AggregateExpr::create_aggregator() const
 {
-  unique_ptr<Aggregator> aggregator;
   switch (aggregate_type_) {
-    case Type::SUM: {
-      aggregator = make_unique<SumAggregator>();
-      break;
-    }
-    default: {
-      ASSERT(false, "unsupported aggregate type");
-      break;
-    }
+    case Type::COUNT: return make_unique<CountAggregator>();
+    case Type::SUM:   return make_unique<SumAggregator>();
+    case Type::AVG:   return make_unique<AvgAggregator>();
+    case Type::MAX:   return make_unique<MaxAggregator>();
+    case Type::MIN:   return make_unique<MinAggregator>();
+    default:          return make_unique<CountAggregator>();
   }
-  return aggregator;
 }
 
 RC AggregateExpr::get_value(const Tuple &tuple, Value &value) const
 {
   return tuple.find_cell(TupleCellSpec(name()), value);
+}
+
+const char *AggregateExpr::get_func_name() const
+{
+  switch (aggregate_type_) {
+    case Type::COUNT: return "count";
+    case Type::SUM: return "sum";
+    case Type::AVG: return "avg";
+    case Type::MAX: return "max";
+    case Type::MIN: return "min";
+    default: return "unknown";
+  }
 }
 
 RC AggregateExpr::type_from_string(const char *type_str, AggregateExpr::Type &type)

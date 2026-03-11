@@ -153,7 +153,8 @@ public:
   ExprType type() const override { return ExprType::STAR; }
   AttrType value_type() const override { return AttrType::UNDEFINED; }
 
-  RC get_value(const Tuple &tuple, Value &value) const override { return RC::UNIMPLEMENTED; }  // 不需要实现
+  RC get_value(const Tuple &tuple, Value &value) const override;
+  RC get_column(Chunk &chunk, Column &column) override;
 
   const char *table_name() const { return table_name_.c_str(); }
 
@@ -521,10 +522,19 @@ public:
 
   unique_ptr<Aggregator> create_aggregator() const;
 
+  /// COUNT(*) COUNT(1) COUNT(1+1) 等常量参数，用于 NULL 处理等优化
+  bool is_count_constexpr() const
+  {
+    return aggregate_type_ == Type::COUNT && param_is_constexpr_;
+  }
+
+  const char *get_func_name() const;
+
 public:
   static RC type_from_string(const char *type_str, Type &type);
 
 private:
   Type                   aggregate_type_;
   unique_ptr<Expression> child_;
+  bool                   param_is_constexpr_ = false;
 };
