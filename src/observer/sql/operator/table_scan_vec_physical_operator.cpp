@@ -16,6 +16,7 @@ using namespace std;
 
 RC TableScanVecPhysicalOperator::open(Trx *trx)
 {
+  table_->add_ref();
   RC rc = table_->get_chunk_scanner(chunk_scanner_, trx, mode_);
   if (rc != RC::SUCCESS) {
     LOG_WARN("failed to get chunk scanner", strrc(rc));
@@ -63,7 +64,13 @@ RC TableScanVecPhysicalOperator::next(Chunk &chunk)
   return rc;
 }
 
-RC TableScanVecPhysicalOperator::close() { return chunk_scanner_.close_scan(); }
+RC TableScanVecPhysicalOperator::close()
+{
+  if (table_ != nullptr) {
+    table_->release();
+  }
+  return chunk_scanner_.close_scan();
+}
 
 string TableScanVecPhysicalOperator::param() const { return table_->name(); }
 

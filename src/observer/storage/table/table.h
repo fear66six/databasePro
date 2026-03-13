@@ -14,6 +14,7 @@ See the Mulan PSL v2 for more details. */
 
 #pragma once
 
+#include <atomic>
 #include "storage/table/table_meta.h"
 #include "storage/table/table_engine.h"
 #include "storage/common/chunk.h"
@@ -113,6 +114,10 @@ public:
   int32_t     table_id() const { return table_meta_.table_id(); }
   const char *name() const;
 
+  void add_ref() { ref_count_.fetch_add(1, std::memory_order_relaxed); }
+  void release() { ref_count_.fetch_sub(1, std::memory_order_relaxed); }
+  int  use_count() const { return ref_count_.load(std::memory_order_relaxed); }
+
   Db *db() const { return db_; }
 
   const TableMeta &table_meta() const;
@@ -132,8 +137,9 @@ public:
   Index *find_index_by_field(const char *field_name) const;
 
 private:
-  Db       *db_ = nullptr;
-  TableMeta table_meta_;
+  Db                 *db_ = nullptr;
+  TableMeta           table_meta_;
+  std::atomic<int>    ref_count_{0};
   // DiskBufferPool    *data_buffer_pool_ = nullptr;  /// 数据文件关联的buffer pool
   // RecordFileHandler *record_handler_   = nullptr;  /// 记录操作
   // vector<Index *>    indexes_;

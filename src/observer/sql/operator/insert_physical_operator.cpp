@@ -25,6 +25,7 @@ InsertPhysicalOperator::InsertPhysicalOperator(Table *table, vector<Value> &&val
 
 RC InsertPhysicalOperator::open(Trx *trx)
 {
+  table_->add_ref();
   Record record;
   RC     rc = table_->make_record(static_cast<int>(values_.size()), values_.data(), record);
   if (rc != RC::SUCCESS) {
@@ -41,4 +42,10 @@ RC InsertPhysicalOperator::open(Trx *trx)
 
 RC InsertPhysicalOperator::next() { return RC::RECORD_EOF; }
 
-RC InsertPhysicalOperator::close() { return RC::SUCCESS; }
+RC InsertPhysicalOperator::close()
+{
+  if (table_ != nullptr) {
+    table_->release();
+  }
+  return RC::SUCCESS;
+}

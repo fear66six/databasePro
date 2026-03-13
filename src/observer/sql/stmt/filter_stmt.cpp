@@ -50,6 +50,21 @@ RC FilterStmt::create(Db *db, Table *default_table, unordered_map<string, Table 
   return rc;
 }
 
+RC FilterStmt::create(Db *db, Table *default_table, unordered_map<string, Table *> *tables,
+    Expression *condition, FilterStmt *&stmt)
+{
+  RC rc = RC::SUCCESS;
+  stmt  = nullptr;
+  if (condition == nullptr) {
+    return rc;
+  }
+
+  FilterStmt *tmp_stmt = new FilterStmt();
+  tmp_stmt->condition_ = unique_ptr<Expression>(condition);
+  stmt                = tmp_stmt;
+  return rc;
+}
+
 RC get_table_and_field(Db *db, Table *default_table, unordered_map<string, Table *> *tables,
     const RelAttrSqlNode &attr, Table *&table, const FieldMeta *&field)
 {

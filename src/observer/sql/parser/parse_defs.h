@@ -78,6 +78,27 @@ struct ConditionSqlNode
 };
 
 /**
+ * @brief 描述一串 inner join
+ * @ingroup SQLParser
+ * @details t1 inner join t2 on condition inner join t3 on condition
+ */
+struct InnerJoinSqlNode
+{
+  pair<string, string>          base_relation;   ///< (table_name, alias)
+  vector<pair<string, string>>  join_relations;  ///< (table_name, alias) for each joined table
+  vector<Expression *>          conditions;      ///< ON condition for each join
+
+  InnerJoinSqlNode() = default;
+  InnerJoinSqlNode(InnerJoinSqlNode &&other) noexcept
+      : base_relation(std::move(other.base_relation)),
+        join_relations(std::move(other.join_relations)),
+        conditions(std::move(other.conditions))
+  {}
+  InnerJoinSqlNode &operator=(InnerJoinSqlNode &&other) noexcept;
+  ~InnerJoinSqlNode();
+};
+
+/**
  * @brief 描述一个select语句
  * @ingroup SQLParser
  * @details 一个正常的select语句描述起来比这个要复杂很多，这里做了简化。
@@ -91,8 +112,8 @@ struct ConditionSqlNode
 struct SelectSqlNode
 {
   vector<unique_ptr<Expression>> expressions;  ///< 查询的表达式
-  vector<string>                 relations;    ///< 查询的表
-  vector<ConditionSqlNode>       conditions;   ///< 查询条件，使用AND串联起来多个条件
+  vector<InnerJoinSqlNode>       relations;    ///< 查询的表（支持 INNER JOIN）
+  vector<ConditionSqlNode>       conditions;   ///< WHERE 查询条件，使用AND串联起来多个条件
   vector<unique_ptr<Expression>> group_by;     ///< group by clause
 };
 

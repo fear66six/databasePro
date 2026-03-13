@@ -191,6 +191,11 @@ RC Db::drop_table(const char *table_name)
 
   Table *table = iter->second;
 
+  if (table->use_count() > 0) {
+    LOG_WARN("table is in use: %s", table_name);
+    return RC::SCHEMA_TABLE_EXIST;
+  }
+
   // 备份元数据需要的信息（索引名等），因为后面要删除 table 对象
   const TableMeta &table_meta = table->table_meta();
   vector<string>   index_names;

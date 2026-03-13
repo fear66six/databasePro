@@ -78,13 +78,21 @@ public:
 public:
   const vector<FilterUnit *> &filter_units() const { return filter_units_; }
 
+  /// Expression-based condition (for ON clause, etc.). When set, filter_units_ is ignored.
+  unique_ptr<Expression> &condition() { return condition_; }
+  const unique_ptr<Expression> &condition() const { return condition_; }
+
 public:
   static RC create(Db *db, Table *default_table, unordered_map<string, Table *> *tables,
       const ConditionSqlNode *conditions, int condition_num, FilterStmt *&stmt);
+
+  static RC create(Db *db, Table *default_table, unordered_map<string, Table *> *tables,
+      Expression *condition, FilterStmt *&stmt);
 
   static RC create_filter_unit(Db *db, Table *default_table, unordered_map<string, Table *> *tables,
       const ConditionSqlNode &condition, FilterUnit *&filter_unit);
 
 private:
   vector<FilterUnit *> filter_units_;  // 默认当前都是AND关系
+  unique_ptr<Expression> condition_;   // Expression-based condition (for ON clause)
 };

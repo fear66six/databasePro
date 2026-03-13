@@ -97,6 +97,7 @@ void LoadDataExecutor::load_data(Table *table, const char *file_name, char termi
     return;
   }
 
+  table->add_ref();
   struct timespec begin_time;
   clock_gettime(CLOCK_MONOTONIC, &begin_time);
   const int sys_field_num = table->table_meta().sys_field_num();
@@ -146,4 +147,5 @@ void LoadDataExecutor::load_data(Table *table, const char *file_name, char termi
   }
   LOG_INFO("load data done. row num: %s, result: %s", insertion_count, strrc(rc));
   sql_result->set_return_code(RC::SUCCESS);
+  table->release();
 }

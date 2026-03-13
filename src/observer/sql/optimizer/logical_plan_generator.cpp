@@ -108,20 +108,59 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
     return rc;
   }
 
-  const vector<Table *> &tables = select_stmt->tables();
-  for (Table *table : tables) {
+  const vector<SelectStmt::JoinTables> &join_tables_list = select_stmt->join_tables();
 
+  auto process_one_table = [this](unique_ptr<LogicalOperator> &prev_oper, Table *table, FilterStmt *on_filter) -> RC {
     unique_ptr<LogicalOperator> table_get_oper(new TableGetLogicalOperator(table, ReadWriteMode::READ_ONLY));
-    if (table_oper == nullptr) {
-      table_oper = std::move(table_get_oper);
+    unique_ptr<LogicalOperator> on_predicate_oper;
+    if (on_filter != nullptr && on_filter->condition()) {
+      RC rc_local = create_plan(on_filter, on_predicate_oper);
+      if (rc_local != RC::SUCCESS) {
+        return rc_local;
+      }
+    }
+    if (prev_oper == nullptr) {
+      prev_oper = std::move(table_get_oper);
     } else {
       JoinLogicalOperator *join_oper = new JoinLogicalOperator;
-      join_oper->add_child(std::move(table_oper));
+      join_oper->add_child(std::move(prev_oper));
       join_oper->add_child(std::move(table_get_oper));
-      table_oper = unique_ptr<LogicalOperator>(join_oper);
+      if (on_predicate_oper) {
+        on_predicate_oper->add_child(unique_ptr<LogicalOperator>(join_oper));
+        prev_oper = std::move(on_predicate_oper);
+      } else {
+        prev_oper = unique_ptr<LogicalOperator>(join_oper);
+      }
+    }
+    return RC::SUCCESS;
+  };
+
+  unique_ptr<LogicalOperator> outside_prev_oper(nullptr);
+  for (const SelectStmt::JoinTables &jt : join_tables_list) {
+    unique_ptr<LogicalOperator> prev_oper(nullptr);
+    const vector<Table *>      &join_tables = jt.join_tables();
+    const vector<FilterStmt *> &on_conds   = jt.on_conds();
+    if (join_tables.size() != on_conds.size()) {
+      LOG_WARN("join_tables size %zu != on_conds size %zu", join_tables.size(), on_conds.size());
+      return RC::INTERNAL;
+    }
+    for (size_t i = 0; i < join_tables.size(); i++) {
+      rc = process_one_table(prev_oper, join_tables[i], on_conds[i]);
+      if (rc != RC::SUCCESS) {
+        return rc;
+      }
+    }
+    if (outside_prev_oper == nullptr) {
+      outside_prev_oper = std::move(prev_oper);
+    } else {
+      JoinLogicalOperator *join_oper = new JoinLogicalOperator;
+      join_oper->add_child(std::move(outside_prev_oper));
+      join_oper->add_child(std::move(prev_oper));
+      outside_prev_oper = unique_ptr<LogicalOperator>(join_oper);
     }
   }
 
+  table_oper = std::move(outside_prev_oper);
 
   if (predicate_oper) {
     if (*last_oper) {
@@ -159,9 +198,26 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
 
 RC LogicalPlanGenerator::create_plan(FilterStmt *filter_stmt, unique_ptr<LogicalOperator> &logical_operator)
 {
-  RC                                  rc = RC::SUCCESS;
+  RC rc = RC::SUCCESS;
+  logical_operator = nullptr;
+
+  if (filter_stmt == nullptr) {
+    return rc;
+  }
+
+  if (filter_stmt->condition()) {
+    vector<unique_ptr<Expression>> cmp_exprs;
+    cmp_exprs.push_back(std::move(filter_stmt->condition()));
+    unique_ptr<ConjunctionExpr> conjunction_expr(new ConjunctionExpr(ConjunctionExpr::Type::AND, cmp_exprs));
+    logical_operator = unique_ptr<LogicalOperator>(new PredicateLogicalOperator(std::move(conjunction_expr)));
+    return rc;
+  }
+
   vector<unique_ptr<Expression>> cmp_exprs;
   const vector<FilterUnit *>    &filter_units = filter_stmt->filter_units();
+  if (filter_units.empty()) {
+    return rc;
+  }
   for (const FilterUnit *filter_unit : filter_units) {
     const FilterObj &filter_obj_left  = filter_unit->left();
     const FilterObj &filter_obj_right = filter_unit->right();

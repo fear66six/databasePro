@@ -22,6 +22,9 @@ UpdatePhysicalOperator::UpdatePhysicalOperator(Table *table, const FieldMeta *fi
 RC UpdatePhysicalOperator::open(Trx *trx)
 {
   trx_ = trx;
+  if (table_ != nullptr) {
+    table_->add_ref();
+  }
   if (children_.empty()) {
     LOG_WARN("UpdatePhysicalOperator::open has no child, table=%s", table_ ? table_->name() : "null");
     return RC::SUCCESS;
@@ -90,6 +93,9 @@ RC UpdatePhysicalOperator::next()
 
 RC UpdatePhysicalOperator::close()
 {
+  if (table_ != nullptr) {
+    table_->release();
+  }
   if (!children_.empty()) {
     RC rc = children_[0]->close();
     if (rc != RC::SUCCESS) {

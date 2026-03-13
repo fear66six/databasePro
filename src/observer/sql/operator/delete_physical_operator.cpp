@@ -19,6 +19,9 @@ See the Mulan PSL v2 for more details. */
 
 RC DeletePhysicalOperator::open(Trx *trx)
 {
+  if (table_ != nullptr) {
+    table_->add_ref();
+  }
   if (children_.empty()) {
     return RC::SUCCESS;
   }
@@ -67,5 +70,8 @@ RC DeletePhysicalOperator::next()
 
 RC DeletePhysicalOperator::close()
 {
+  if (table_ != nullptr) {
+    table_->release();
+  }
   return RC::SUCCESS;
 }

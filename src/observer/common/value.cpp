@@ -271,6 +271,24 @@ int Value::compare(const Value &other) const
     if (rc != RC::SUCCESS) return INT32_MAX;
     return DataType::type_instance(AttrType::DATES)->compare(left_date, other);
   }
+  if (attr_type_ == AttrType::CHARS && (other.attr_type() == AttrType::INTS || other.attr_type() == AttrType::FLOATS)) {
+    Value left_num;
+    if (other.attr_type() == AttrType::INTS) {
+      left_num.set_int(get_int());
+    } else {
+      left_num.set_float(get_float());
+    }
+    return DataType::type_instance(other.attr_type())->compare(left_num, other);
+  }
+  if ((attr_type_ == AttrType::INTS || attr_type_ == AttrType::FLOATS) && other.attr_type() == AttrType::CHARS) {
+    Value right_num;
+    if (attr_type_ == AttrType::INTS) {
+      right_num.set_int(other.get_int());
+    } else {
+      right_num.set_float(other.get_float());
+    }
+    return DataType::type_instance(attr_type_)->compare(*this, right_num);
+  }
   return DataType::type_instance(this->attr_type_)->compare(*this, other);
 }
 

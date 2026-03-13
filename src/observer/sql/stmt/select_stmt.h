@@ -16,10 +16,10 @@ See the Mulan PSL v2 for more details. */
 
 #include "common/sys/rc.h"
 #include "sql/stmt/stmt.h"
+#include "sql/stmt/filter_stmt.h"
 #include "storage/field/field.h"
 
 class FieldMeta;
-class FilterStmt;
 class Db;
 class Table;
 
@@ -30,6 +30,50 @@ class Table;
 class SelectStmt : public Stmt
 {
 public:
+  class JoinTables
+  {
+  public:
+    JoinTables() = default;
+    JoinTables(const JoinTables &)            = delete;
+    JoinTables &operator=(const JoinTables &) = delete;
+    JoinTables(JoinTables &&other) noexcept
+        : join_tables_(std::move(other.join_tables_)), on_conds_(std::move(other.on_conds_))
+    {}
+    JoinTables &operator=(JoinTables &&other) noexcept
+    {
+      if (this != &other) {
+        for (FilterStmt *fu : on_conds_) {
+          if (fu != nullptr) {
+            delete fu;
+          }
+        }
+        join_tables_ = std::move(other.join_tables_);
+        on_conds_    = std::move(other.on_conds_);
+      }
+      return *this;
+    }
+    ~JoinTables()
+    {
+      for (FilterStmt *fu : on_conds_) {
+        if (fu != nullptr) {
+          delete fu;
+        }
+      }
+      on_conds_.clear();
+    }
+    void push_join_table(Table *table, FilterStmt *on_filter)
+    {
+      join_tables_.push_back(table);
+      on_conds_.push_back(on_filter);
+    }
+    const vector<Table *>      &join_tables() const { return join_tables_; }
+    const vector<FilterStmt *> &on_conds() const { return on_conds_; }
+
+  private:
+    vector<Table *>      join_tables_;
+    vector<FilterStmt *> on_conds_;
+  };
+
   SelectStmt() = default;
   ~SelectStmt() override;
 
@@ -40,7 +84,9 @@ public:
 
 public:
   const vector<Table *> &tables() const { return tables_; }
-  FilterStmt            *filter_stmt() const { return filter_stmt_; }
+  FilterStmt           *filter_stmt() const { return filter_stmt_; }
+
+  const vector<JoinTables> &join_tables() const { return join_tables_; }
 
   vector<unique_ptr<Expression>> &query_expressions() { return query_expressions_; }
   vector<unique_ptr<Expression>> &group_by() { return group_by_; }
@@ -49,5 +95,6 @@ private:
   vector<unique_ptr<Expression>> query_expressions_;
   vector<Table *>                tables_;
   FilterStmt                    *filter_stmt_ = nullptr;
+  vector<JoinTables>             join_tables_;
   vector<unique_ptr<Expression>> group_by_;
 };
