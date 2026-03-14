@@ -80,7 +80,8 @@ public:
   StmtType type() const override { return StmtType::SELECT; }
 
 public:
-  static RC create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt);
+  static RC create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt,
+      const unordered_map<string, Table *> &parent_table_map = {});
 
 public:
   const vector<Table *> &tables() const { return tables_; }

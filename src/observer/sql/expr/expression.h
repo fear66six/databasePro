@@ -17,12 +17,16 @@ See the Mulan PSL v2 for more details. */
 #include "common/lang/string.h"
 #include "common/lang/memory.h"
 #include "common/lang/unordered_set.h"
+#include "common/lang/unordered_map.h"
 #include "common/value.h"
 #include "storage/field/field.h"
 #include "sql/expr/aggregator.h"
 #include "storage/common/chunk.h"
+#include "sql/parser/parse_defs.h"
 
 class Tuple;
+class Db;
+class Session;
 
 /**
  * @defgroup Expression
@@ -47,6 +51,8 @@ enum class ExprType
   CONJUNCTION,  ///< 多个表达式使用同一种关系(AND或OR)来联结
   ARITHMETIC,   ///< 算术运算
   AGGREGATION,  ///< 聚合运算
+  SUBQUERY,    ///< 子查询
+  VALUE_LIST,   ///< IN (val1, val2, ...) 的值列表
 };
 
 /**
@@ -537,4 +543,74 @@ private:
   Type                   aggregate_type_;
   unique_ptr<Expression> child_;
   bool                   param_is_constexpr_ = false;
+};
+
+class SelectStmt;
+class LogicalOperator;
+class PhysicalOperator;
+class Trx;
+
+/**
+ * @brief IN (val1, val2, ...) 的值列表表达式
+ * @ingroup Expression
+ */
+class ValueListExpr : public Expression
+{
+public:
+  explicit ValueListExpr(vector<unique_ptr<Expression>> &&values);
+  virtual ~ValueListExpr() = default;
+
+  void reset() const { index_ = 0; }
+
+  RC get_value(const Tuple &tuple, Value &value) const override;
+  RC try_get_value(Value &value) const override { return RC::UNIMPLEMENTED; }
+
+  ExprType type() const override { return ExprType::VALUE_LIST; }
+  AttrType value_type() const override { return AttrType::UNDEFINED; }
+
+  unique_ptr<Expression> copy() const override;
+
+  const vector<unique_ptr<Expression>> &values() const { return values_; }
+  vector<unique_ptr<Expression>> &values_mut() { return values_; }
+
+private:
+  vector<unique_ptr<Expression>> values_;
+  mutable size_t                index_ = 0;
+};
+
+/**
+ * @brief 子查询表达式（简单子查询，非关联）
+ * @ingroup Expression
+ */
+class SubQueryExpr : public Expression
+{
+public:
+  explicit SubQueryExpr(SelectSqlNode &sql_node);
+  virtual ~SubQueryExpr();
+
+  RC open(Trx *trx);
+  RC close();
+  bool has_more_row(const Tuple &tuple) const;
+
+  void   set_trx(Trx *trx) { trx_ = trx; }
+  Trx *  get_trx() const { return trx_; }
+
+  RC get_value(const Tuple &tuple, Value &value) const override;
+  RC try_get_value(Value &value) const override { return RC::UNIMPLEMENTED; }
+
+  ExprType type() const override { return ExprType::SUBQUERY; }
+  AttrType value_type() const override { return AttrType::UNDEFINED; }
+
+  unique_ptr<Expression> copy() const override { return nullptr; }
+
+  RC generate_select_stmt(Db *db, const unordered_map<string, Table *> &tables);
+  RC generate_logical_oper();
+  RC generate_physical_oper(Session *session);
+
+private:
+  unique_ptr<SelectSqlNode>    sql_node_;
+  unique_ptr<SelectStmt>       stmt_;
+  unique_ptr<LogicalOperator>  logical_oper_;
+  mutable unique_ptr<PhysicalOperator> physical_oper_;
+  mutable Trx *               trx_ = nullptr;
 };

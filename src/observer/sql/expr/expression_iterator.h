@@ -19,9 +19,11 @@ See the Mulan PSL v2 for more details. */
 #include "common/lang/memory.h"
 
 class Expression;
+class SubQueryExpr;
 
 class ExpressionIterator
 {
 public:
   static RC iterate_child_expr(Expression &expr, function<RC(unique_ptr<Expression> &)> callback);
+  static void for_each_subquery(Expression &expr, function<void(SubQueryExpr &)> callback);
 };

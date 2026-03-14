@@ -23,12 +23,41 @@ See the Mulan PSL v2 for more details. */
 #include "event/session_event.h"
 #include "event/sql_event.h"
 #include "sql/operator/logical_operator.h"
+#include "sql/operator/table_get_logical_operator.h"
 #include "sql/stmt/stmt.h"
+#include "sql/expr/expression_iterator.h"
+#include "sql/expr/expression.h"
 #include "sql/optimizer/cascade/optimizer.h"
 #include "sql/optimizer/optimizer_utils.h"
 
 using namespace std;
 using namespace common;
+
+static bool plan_has_subquery(LogicalOperator *oper)
+{
+  if (!oper) return false;
+  bool found = false;
+  auto mark_found = [&found](SubQueryExpr &) { found = true; };
+  for (auto &expr : oper->expressions()) {
+    if (expr) {
+      ExpressionIterator::for_each_subquery(*expr, mark_found);
+      if (found) return true;
+    }
+  }
+  if (oper->type() == LogicalOperatorType::TABLE_GET) {
+    auto *tget = static_cast<TableGetLogicalOperator *>(oper);
+    for (auto &expr : tget->predicates()) {
+      if (expr) {
+        ExpressionIterator::for_each_subquery(*expr, mark_found);
+        if (found) return true;
+      }
+    }
+  }
+  for (auto &child : oper->children()) {
+    if (plan_has_subquery(child.get())) return true;
+  }
+  return false;
+}
 
 RC OptimizeStage::handle_request(SQLStageEvent *sql_event)
 {
@@ -89,10 +118,13 @@ RC OptimizeStage::generate_physical_plan(
     unique_ptr<LogicalOperator> &logical_operator, unique_ptr<PhysicalOperator> &physical_operator, Session *session)
 {
   RC rc = RC::SUCCESS;
-  if (session->get_execution_mode() == ExecutionMode::CHUNK_ITERATOR && LogicalOperator::can_generate_vectorized_operator(logical_operator->type())) {
+  bool use_chunk = session->get_execution_mode() == ExecutionMode::CHUNK_ITERATOR
+                   && LogicalOperator::can_generate_vectorized_operator(logical_operator->type())
+                   && !plan_has_subquery(logical_operator.get());
+  if (use_chunk) {
     LOG_TRACE("use chunk iterator");
     session->set_used_chunk_mode(true);
-    rc    = physical_plan_generator_.create_vec(*logical_operator, physical_operator, session);
+    rc = physical_plan_generator_.create_vec(*logical_operator, physical_operator, session);
   } else {
     LOG_TRACE("use tuple iterator");
     session->set_used_chunk_mode(false);

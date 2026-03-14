@@ -17,6 +17,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/expr/tuple.h"
 #include "sql/expr/arithmetic_operator.hpp"
 #include "storage/common/column.h"
+#include "common/type/data_type.h"
 #include <functional>
 #include <regex>
 #include <string>
@@ -84,6 +85,28 @@ RC ValueExpr::get_value(const Tuple &tuple, Value &value) const
 {
   value = value_;
   return RC::SUCCESS;
+}
+
+ValueListExpr::ValueListExpr(vector<unique_ptr<Expression>> &&values) : values_(std::move(values)) {}
+
+RC ValueListExpr::get_value(const Tuple &tuple, Value &value) const
+{
+  if (index_ >= values_.size()) {
+    value.set_type(AttrType::UNDEFINED);
+    return RC::RECORD_EOF;
+  }
+  RC rc = values_[index_]->get_value(tuple, value);
+  index_++;
+  return rc;
+}
+
+unique_ptr<Expression> ValueListExpr::copy() const
+{
+  vector<unique_ptr<Expression>> copies;
+  for (const auto &v : values_) {
+    copies.push_back(v->copy());
+  }
+  return make_unique<ValueListExpr>(std::move(copies));
 }
 
 RC ValueExpr::get_column(Chunk &chunk, Column &column)
@@ -196,6 +219,17 @@ RC ComparisonExpr::compare_value(const Value &left, const Value &right, bool &re
     return rc;
   }
 
+  // DATE vs CHARS: 转换失败（非法日期）应返回 INVALID_ARGUMENT，使查询返回 FAILURE
+  if ((left.attr_type() == AttrType::DATES && right.attr_type() == AttrType::CHARS) ||
+      (left.attr_type() == AttrType::CHARS && right.attr_type() == AttrType::DATES)) {
+    Value tmp_date;
+    const Value &chars_val = (left.attr_type() == AttrType::CHARS) ? left : right;
+    RC conv_rc = DataType::type_instance(AttrType::DATES)->set_value_from_str(tmp_date, chars_val.get_string());
+    if (conv_rc != RC::SUCCESS) {
+      return RC::INVALID_ARGUMENT;
+    }
+  }
+
   int cmp_result = left.compare(right);
   result         = false;
   switch (comp_) {
@@ -249,23 +283,117 @@ RC ComparisonExpr::try_get_value(Value &cell) const
 
 RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
 {
+  RC rc = RC::SUCCESS;
+
+  if (comp_ == EXISTS_OP || comp_ == NOT_EXISTS_OP) {
+    SubQueryExpr *subquery = (right_->type() == ExprType::SUBQUERY) ? static_cast<SubQueryExpr *>(right_.get()) : nullptr;
+    if (!subquery) {
+      return RC::INVALID_ARGUMENT;
+    }
+    subquery->open(subquery->get_trx());
+    RC rc = right_->get_value(tuple, value);
+    subquery->close();
+    if (rc == RC::RECORD_EOF) {
+      value.set_boolean(comp_ == NOT_EXISTS_OP);
+      return RC::SUCCESS;
+    }
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    value.set_boolean(comp_ == EXISTS_OP);
+    return RC::SUCCESS;
+  }
+
+  if (comp_ == IN_OP || comp_ == NOT_IN_OP) {
+    Value left_value;
+    RC    rc = left_->get_value(tuple, left_value);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    if (value_is_null(left_value)) {
+      value.set_boolean(false);
+      return RC::SUCCESS;
+    }
+    SubQueryExpr *subquery = (right_->type() == ExprType::SUBQUERY) ? static_cast<SubQueryExpr *>(right_.get()) : nullptr;
+    ValueListExpr *vlist = (right_->type() == ExprType::VALUE_LIST) ? static_cast<ValueListExpr *>(right_.get()) : nullptr;
+    if (!subquery && !vlist) {
+      return RC::INVALID_ARGUMENT;
+    }
+    if (subquery) {
+      subquery->open(subquery->get_trx());
+    } else {
+      vlist->reset();
+    }
+    bool found = false;
+    bool has_null = false;
+    Value right_value;
+    while (RC::SUCCESS == (rc = right_->get_value(tuple, right_value))) {
+      if (value_is_null(right_value)) {
+        has_null = true;
+      } else if (left_value.compare(right_value) == 0) {
+        found = true;
+      }
+    }
+    if (subquery) {
+      subquery->close();
+    }
+    if (rc != RC::RECORD_EOF && rc != RC::SUCCESS) {
+      return rc;
+    }
+    value.set_boolean(comp_ == IN_OP ? found : (has_null ? false : !found));
+    return RC::SUCCESS;
+  }
+
   Value left_value;
   Value right_value;
+  SubQueryExpr *left_subquery  = (left_->type() == ExprType::SUBQUERY) ? static_cast<SubQueryExpr *>(left_.get()) : nullptr;
+  SubQueryExpr *right_subquery = (right_->type() == ExprType::SUBQUERY) ? static_cast<SubQueryExpr *>(right_.get()) : nullptr;
 
-  RC rc = left_->get_value(tuple, left_value);
+  if (left_subquery) {
+    left_subquery->open(left_subquery->get_trx());
+  }
+  rc = left_->get_value(tuple, left_value);
+  if (left_subquery) {
+    if (rc == RC::RECORD_EOF) {
+      left_value.set_type(AttrType::UNDEFINED);
+      rc = RC::SUCCESS;
+    }
+    if (left_subquery->has_more_row(tuple)) {
+      left_subquery->close();
+      return RC::INVALID_ARGUMENT;
+    }
+    left_subquery->close();
+  }
   if (rc != RC::SUCCESS) {
-    LOG_WARN("failed to get value of left expression. rc=%s", strrc(rc));
     return rc;
   }
+
+  if (right_subquery) {
+    right_subquery->open(right_subquery->get_trx());
+  }
   rc = right_->get_value(tuple, right_value);
+  if (right_subquery) {
+    if (rc == RC::RECORD_EOF) {
+      right_value.set_type(AttrType::UNDEFINED);
+      rc = RC::SUCCESS;
+    }
+    if (right_subquery->has_more_row(tuple)) {
+      right_subquery->close();
+      return RC::INVALID_ARGUMENT;
+    }
+    right_subquery->close();
+  }
   if (rc != RC::SUCCESS) {
-    LOG_WARN("failed to get value of right expression. rc=%s", strrc(rc));
     return rc;
+  }
+
+  if ((left_subquery || right_subquery) && (value_is_null(left_value) || value_is_null(right_value))) {
+    value.set_boolean(false);
+    return RC::SUCCESS;
   }
 
   bool bool_value = false;
-
-  rc = compare_value(left_value, right_value, bool_value);
+  rc             = compare_value(left_value, right_value, bool_value);
   if (rc == RC::SUCCESS) {
     value.set_boolean(bool_value);
   }

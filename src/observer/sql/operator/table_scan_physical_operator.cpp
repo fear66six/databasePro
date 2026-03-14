@@ -14,12 +14,18 @@ See the Mulan PSL v2 for more details. */
 
 #include "sql/operator/table_scan_physical_operator.h"
 #include "event/sql_debug.h"
+#include "sql/expr/expression_iterator.h"
 #include "storage/table/table.h"
 
 using namespace std;
 
 RC TableScanPhysicalOperator::open(Trx *trx)
 {
+  for (unique_ptr<Expression> &expr : predicates_) {
+    ExpressionIterator::for_each_subquery(*expr, [trx](SubQueryExpr &sq) {
+      sq.set_trx(trx);
+    });
+  }
   table_->add_ref();
   RC rc = table_->get_record_scanner(record_scanner_, trx, mode_);
   if (rc == RC::SUCCESS) {

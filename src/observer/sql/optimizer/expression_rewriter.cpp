@@ -139,6 +139,20 @@ RC ExpressionRewriter::rewrite_expression(unique_ptr<Expression> &expr, bool &ch
       }
     } break;
 
+    case ExprType::VALUE_LIST: {
+      auto value_list_expr = static_cast<ValueListExpr *>(expr.get());
+      for (unique_ptr<Expression> &child_expr : value_list_expr->values_mut()) {
+        bool sub_change_made = false;
+        rc                   = rewrite_expression(child_expr, sub_change_made);
+        if (rc != RC::SUCCESS) {
+          return rc;
+        }
+        if (sub_change_made && !change_made) {
+          change_made = true;
+        }
+      }
+    } break;
+
     default: {
       // do nothing
     } break;

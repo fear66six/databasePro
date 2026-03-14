@@ -120,6 +120,8 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         NE
         NOT
         LIKE
+        IN
+        EXISTS
         INNER
         JOIN
         OR
@@ -180,6 +182,9 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 %type <value_list>          value_list
 %type <condition_list>      where
 %type <condition_list>      condition_list
+%type <expression>          where_expr
+%type <expression>          condition_expr
+%type <comp>                exists_op
 %type <cstring>             storage_format
 %type <key_list>            primary_key
 %type <key_list>            attr_list
@@ -189,6 +194,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 %type <on_condition>        on_condition
 %type <expression>          expression
 %type <expression>          aggregate_expression
+%type <expression>          sub_query_expr
 %type <expression_list>     expression_list
 %type <expression_list>     group_by
 %type <cstring>             fields_terminated_by
@@ -218,6 +224,8 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 // commands should be a list but I use a single command instead
 %type <sql_node>            commands
 
+%left OR
+%left AND
 %left '+' '-'
 %left '*' '/'
 %right UMINUS
@@ -498,7 +506,7 @@ update_stmt:      /*  update 语句的语法解析树*/
     }
     ;
 select_stmt:        /*  select 语句的语法解析树*/
-    SELECT expression_list FROM from_node from_list where group_by
+    SELECT expression_list FROM from_node from_list where_expr group_by
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
@@ -519,8 +527,7 @@ select_stmt:        /*  select 语句的语法解析树*/
       std::reverse($$->selection.relations.begin(), $$->selection.relations.end());
 
       if ($6 != nullptr) {
-        $$->selection.conditions.swap(*$6);
-        delete $6;
+        $$->selection.condition_expr = $6;
       }
 
       if ($7 != nullptr) {
@@ -591,6 +598,17 @@ expression:
     | aggregate_expression {
       $$ = $1;
     }
+    | sub_query_expr {
+      $$ = $1;
+    }
+    ;
+
+sub_query_expr:
+    LBRACE select_stmt RBRACE
+    {
+      $$ = new SubQueryExpr($2->selection);
+      delete $2;
+    }
     ;
 
 aggregate_expression:
@@ -620,6 +638,60 @@ where:
       $$ = $2;  
     }
     ;
+
+where_expr:
+    /* empty */
+    {
+      $$ = nullptr;
+    }
+    | WHERE condition_expr {
+      $$ = $2;
+    }
+    ;
+
+condition_expr:
+    condition_expr AND condition_expr {
+      vector<unique_ptr<Expression>> children;
+      children.push_back(unique_ptr<Expression>($1));
+      children.push_back(unique_ptr<Expression>($3));
+      $$ = new ConjunctionExpr(ConjunctionExpr::Type::AND, children);
+    }
+    | condition_expr OR condition_expr {
+      vector<unique_ptr<Expression>> children;
+      children.push_back(unique_ptr<Expression>($1));
+      children.push_back(unique_ptr<Expression>($3));
+      $$ = new ConjunctionExpr(ConjunctionExpr::Type::OR, children);
+    }
+    | expression comp_op expression {
+      $$ = new ComparisonExpr($2, unique_ptr<Expression>($1), unique_ptr<Expression>($3));
+    }
+    | expression IN LBRACE select_stmt RBRACE {
+      $$ = new ComparisonExpr(IN_OP, unique_ptr<Expression>($1), unique_ptr<Expression>(new SubQueryExpr($4->selection)));
+      delete $4;
+    }
+    | expression NOT IN LBRACE select_stmt RBRACE {
+      $$ = new ComparisonExpr(NOT_IN_OP, unique_ptr<Expression>($1), unique_ptr<Expression>(new SubQueryExpr($5->selection)));
+      delete $5;
+    }
+    | expression IN LBRACE expression_list RBRACE {
+      $$ = new ComparisonExpr(IN_OP, unique_ptr<Expression>($1), unique_ptr<Expression>(new ValueListExpr(std::move(*$4))));
+      delete $4;
+    }
+    | expression NOT IN LBRACE expression_list RBRACE {
+      $$ = new ComparisonExpr(NOT_IN_OP, unique_ptr<Expression>($1), unique_ptr<Expression>(new ValueListExpr(std::move(*$5))));
+      delete $5;
+    }
+    | exists_op LBRACE select_stmt RBRACE {
+      Value v;
+      v.set_type(AttrType::UNDEFINED);
+      $$ = new ComparisonExpr($1, unique_ptr<Expression>(new ValueExpr(v)), unique_ptr<Expression>(new SubQueryExpr($3->selection)));
+      delete $3;
+    }
+    | LBRACE condition_expr RBRACE {
+      $$ = $2;
+    }
+    ;
+
 condition_list:
     /* empty */
     {
@@ -764,6 +836,13 @@ comp_op:
     | NE { $$ = NOT_EQUAL; }
     | LIKE { $$ = LIKE_OP; }
     | NOT LIKE { $$ = NOT_LIKE_OP; }
+    | IN { $$ = IN_OP; }
+    | NOT IN { $$ = NOT_IN_OP; }
+    ;
+
+exists_op:
+    EXISTS { $$ = EXISTS_OP; }
+    | NOT EXISTS { $$ = NOT_EXISTS_OP; }
     ;
 
 // your code here

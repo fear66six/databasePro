@@ -13,6 +13,7 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include "sql/operator/index_scan_physical_operator.h"
+#include "sql/expr/expression_iterator.h"
 #include "storage/index/index.h"
 #include "storage/trx/trx.h"
 
@@ -36,6 +37,11 @@ RC IndexScanPhysicalOperator::open(Trx *trx)
 {
   if (nullptr == table_ || nullptr == index_) {
     return RC::INTERNAL;
+  }
+  for (unique_ptr<Expression> &expr : predicates_) {
+    ExpressionIterator::for_each_subquery(*expr, [trx](SubQueryExpr &sq) {
+      sq.set_trx(trx);
+    });
   }
   table_->add_ref();
 

@@ -118,7 +118,8 @@ static RC process_from_clause(Db *db, vector<Table *> &tables, unordered_map<str
   return RC::SUCCESS;
 }
 
-RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt)
+RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt,
+    const unordered_map<string, Table *> &parent_table_map)
 {
   if (nullptr == db) {
     LOG_WARN("invalid argument. db is null");
@@ -128,8 +129,8 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt)
   BinderContext binder_context;
 
   vector<Table *>                tables;
-  unordered_map<string, Table *> table_map;
-  vector<JoinTables>            join_tables;
+  unordered_map<string, Table *> table_map(parent_table_map.begin(), parent_table_map.end());
+  vector<JoinTables>             join_tables;
 
   RC rc = process_from_clause(db, tables, table_map, binder_context, select_sql.relations, join_tables);
   if (rc != RC::SUCCESS) {
@@ -162,12 +163,24 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt)
   }
 
   FilterStmt *filter_stmt = nullptr;
-  rc = FilterStmt::create(db,
-      default_table,
-      &table_map,
-      select_sql.conditions.data(),
-      static_cast<int>(select_sql.conditions.size()),
-      filter_stmt);
+  if (select_sql.condition_expr != nullptr) {
+    vector<unique_ptr<Expression>> bound_conds;
+    unique_ptr<Expression> cond_ptr(select_sql.condition_expr);
+    select_sql.condition_expr = nullptr;
+    rc = expression_binder.bind_expression(cond_ptr, bound_conds);
+    if (rc != RC::SUCCESS || bound_conds.size() != 1) {
+      LOG_WARN("bind condition expression failed");
+      return rc;
+    }
+    rc = FilterStmt::create(db, default_table, &table_map, bound_conds[0].release(), filter_stmt);
+  } else {
+    rc = FilterStmt::create(db,
+        default_table,
+        &table_map,
+        select_sql.conditions.data(),
+        static_cast<int>(select_sql.conditions.size()),
+        filter_stmt);
+  }
   if (rc != RC::SUCCESS) {
     LOG_WARN("cannot construct filter stmt");
     return rc;

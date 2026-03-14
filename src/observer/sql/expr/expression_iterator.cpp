@@ -63,6 +63,20 @@ RC ExpressionIterator::iterate_child_expr(Expression &expr, function<RC(unique_p
       rc = callback(aggregate_expr.child());
     } break;
 
+    case ExprType::SUBQUERY: {
+      // SubQueryExpr has no child expressions to iterate
+    } break;
+
+    case ExprType::VALUE_LIST: {
+      auto &vlist_expr = static_cast<ValueListExpr &>(expr);
+      for (auto &child : vlist_expr.values_mut()) {
+        rc = callback(child);
+        if (OB_FAIL(rc)) {
+          break;
+        }
+      }
+    } break;
+
     case ExprType::NONE:
     case ExprType::STAR:
     case ExprType::UNBOUND_FIELD:
@@ -77,4 +91,19 @@ RC ExpressionIterator::iterate_child_expr(Expression &expr, function<RC(unique_p
   }
 
   return rc;
+}
+
+void ExpressionIterator::for_each_subquery(Expression &expr, function<void(SubQueryExpr &)> callback)
+{
+  if (expr.type() == ExprType::SUBQUERY) {
+    callback(static_cast<SubQueryExpr &>(expr));
+    return;
+  }
+  auto visitor = [&callback](unique_ptr<Expression> &child) {
+    if (child) {
+      ExpressionIterator::for_each_subquery(*child, callback);
+    }
+    return RC::SUCCESS;
+  };
+  iterate_child_expr(expr, visitor);
 }

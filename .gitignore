@@ -14,6 +14,9 @@ build
 .obclient.history
 log
 miniob
+data/
+result_output/
+test/case/result/
 .ccls-cache
 compile_commands.json
 .name

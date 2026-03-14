@@ -53,6 +53,10 @@ enum CompOp
   GREAT_THAN,   ///< ">"
   LIKE_OP,      ///< "like"
   NOT_LIKE_OP,  ///< "not like"
+  IN_OP,        ///< in (sub query)
+  NOT_IN_OP,    ///< not in (sub query)
+  EXISTS_OP,    ///< exists (sub query)
+  NOT_EXISTS_OP,///< not exists (sub query)
   NO_OP
 };
 
@@ -112,9 +116,10 @@ struct InnerJoinSqlNode
 struct SelectSqlNode
 {
   vector<unique_ptr<Expression>> expressions;  ///< 查询的表达式
-  vector<InnerJoinSqlNode>       relations;    ///< 查询的表（支持 INNER JOIN）
-  vector<ConditionSqlNode>       conditions;   ///< WHERE 查询条件，使用AND串联起来多个条件
-  vector<unique_ptr<Expression>> group_by;     ///< group by clause
+  vector<InnerJoinSqlNode>       relations;   ///< 查询的表（支持 INNER JOIN）
+  vector<ConditionSqlNode>       conditions;  ///< WHERE 查询条件（简单条件，用于兼容）
+  Expression *                   condition_expr = nullptr;  ///< WHERE 表达式条件（支持子查询）
+  vector<unique_ptr<Expression>> group_by;    ///< group by clause
 };
 
 /**

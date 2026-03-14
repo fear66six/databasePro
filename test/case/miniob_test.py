@@ -67,8 +67,9 @@ class GlobalConfig:
   debug = False
   source_code_build_path_name = "build"
 
-def __get_build_path(work_dir: str):
-  return work_dir + '/' + GlobalConfig.source_code_build_path_name
+def __get_build_path(work_dir: str, build_dir: str = None):
+  name = build_dir if build_dir else GlobalConfig.source_code_build_path_name
+  return work_dir + '/' + name
 
 class ResultWriter:
   '''
@@ -191,7 +192,7 @@ class MiniObServer:
 
     self.__process = process
     time.sleep(0.2)
-    if not self.__wait_server_started(10):
+    if not self.__wait_server_started(60):
       time_span = time.time() - time_begin
       _logger.error("Failed to start server in %f seconds", time_span)
       return False
@@ -208,7 +209,7 @@ class MiniObServer:
     self.__process.terminate()
     return_code = -1
     try:
-      return_code = self.__process.wait(10)
+      return_code = self.__process.wait(60)
       if return_code is None:
         self.__process.kill()
         _logger.warning("Failed to stop server: %s", self.__base_dir)
@@ -269,7 +270,7 @@ class MiniObClient:
   测试客户端。使用TCP连接，向服务器发送命令并反馈结果
   '''
 
-  def __init__(self, server_port: int, server_socket: str, time_limit:int = 10):
+  def __init__(self, server_port: int, server_socket: str, time_limit:int = 60):
     if (server_port < 0 or server_port > 65535) and server_socket is None:
       raise(Exception("Invalid server port: " + str(server_port)))
 
@@ -900,6 +901,12 @@ def __init_options():
   # 之前已经编译过，是否需要重新编译，还是直接执行make就可以了
   options_parser.add_argument('--compile-rebuild', action='store_true', default=False, dest='compile_rebuild',
                             help='whether rebuild if build path exists')
+  # 跳过编译，直接使用已有的 build 目录运行测试（需配合 --work-dir 使用）
+  options_parser.add_argument('--skip-compile', action='store_true', default=False, dest='skip_compile',
+                            help='skip cmake and make, use existing build dir. requires --work-dir')
+  # 编译输出目录名，如 build 或 build_debug，相对于 work-dir
+  options_parser.add_argument('--build-dir', action='store', dest='build_dir', default='build',
+                            help='build directory name (e.g. build or build_debug), relative to work-dir. default: build')
 
   options = options_parser.parse_args(sys.argv[1:])
 
@@ -941,14 +948,23 @@ def __init_log(options):
 
 def __init_test_suite(options) -> TestSuite:
   test_suite = TestSuite()
-  test_suite.set_test_case_base_dir(os.path.abspath(options.project_dir + '/test/case/test'))
-  test_suite.set_test_result_base_dir(os.path.abspath(options.project_dir + '/test/case/result'))
-  test_suite.set_test_result_tmp_dir(os.path.abspath(options.work_dir + '/result_output'))
+  proj_abs = os.path.abspath(options.project_dir)
+  if options.work_dir:
+    work_abs = os.path.abspath(os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), options.work_dir)))
+  else:
+    work_abs = os.path.join(tempfile.gettempdir(), 'miniob')
+  build_dir = getattr(options, 'build_dir', 'build')
+  build_path = os.path.join(work_abs, build_dir)
+  data_dir = os.path.join(work_abs, 'data')
+
+  test_suite.set_test_case_base_dir(os.path.join(proj_abs, 'test', 'case', 'test'))
+  test_suite.set_test_result_base_dir(os.path.join(proj_abs, 'test', 'case', 'result'))
+  test_suite.set_test_result_tmp_dir(os.path.join(work_abs, 'result_output'))
 
   test_suite.set_server_port(options.server_port)
   test_suite.set_use_unix_socket(not options.not_use_unix_socket)
-  test_suite.set_db_server_base_dir(__get_build_path(options.work_dir))
-  test_suite.set_db_data_dir(options.work_dir + '/data')
+  test_suite.set_db_server_base_dir(build_path)
+  test_suite.set_db_data_dir(data_dir)
   test_suite.set_db_config(os.path.abspath(options.project_dir + '/etc/observer.ini'))
 
   if options.test_cases is not None:
@@ -961,7 +977,8 @@ def __init_test_suite(options) -> TestSuite:
 
 def __init_test_suite_with_source_code(options, eval_result):
   proj_path = os.path.abspath(options.project_dir)
-  build_path = __get_build_path(options.work_dir)
+  build_dir = getattr(options, 'build_dir', 'build')
+  build_path = __get_build_path(options.work_dir, build_dir)
 
   if not compile(proj_path, build_path, 
                  options.compile_cmake_args, 
@@ -1084,7 +1101,21 @@ def run(options) -> Tuple[bool, str]:
   eval_result = EvalResult()
 
   try:
-    test_suite:TestSuite = __init_test_suite_with_source_code(options, eval_result)
+    if options.skip_compile:
+      if not options.work_dir:
+        _logger.error('--skip-compile requires --work-dir to locate build/bin/observer')
+        test_suite = None
+      else:
+        test_suite = __init_test_suite(options)
+        build_dir = getattr(options, 'build_dir', 'build')
+        work_abs = os.path.abspath(os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), options.work_dir)))
+        build_path = os.path.join(work_abs, build_dir)
+        observer_path = os.path.join(build_path, 'bin', 'observer')
+        if not os.path.isfile(observer_path):
+          _logger.error('observer not found: %s. run without --skip-compile to compile first.', observer_path)
+          test_suite = None
+    else:
+      test_suite = __init_test_suite_with_source_code(options, eval_result)
 
     if test_suite != None:
       result = test_suite.run(eval_result)

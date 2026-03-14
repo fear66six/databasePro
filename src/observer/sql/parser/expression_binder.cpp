@@ -90,6 +90,15 @@ RC ExpressionBinder::bind_expression(unique_ptr<Expression> &expr, vector<unique
       ASSERT(false, "shouldn't be here");
     } break;
 
+    case ExprType::SUBQUERY: {
+      bound_expressions.push_back(std::move(expr));
+      return RC::SUCCESS;
+    } break;
+
+    case ExprType::VALUE_LIST: {
+      return bind_value_list_expression(expr, bound_expressions);
+    } break;
+
     default: {
       LOG_WARN("unknown expression type: %d", static_cast<int>(expr->type()));
       return RC::INTERNAL;
@@ -303,6 +312,38 @@ RC ExpressionBinder::bind_conjunction_expression(
 
   bound_expressions.emplace_back(std::move(expr));
 
+  return RC::SUCCESS;
+}
+
+RC ExpressionBinder::bind_value_list_expression(
+    unique_ptr<Expression> &expr, vector<unique_ptr<Expression>> &bound_expressions)
+{
+  if (nullptr == expr) {
+    return RC::SUCCESS;
+  }
+
+  auto value_list_expr = static_cast<ValueListExpr *>(expr.get());
+
+  for (unique_ptr<Expression> &child_expr : value_list_expr->values_mut()) {
+    vector<unique_ptr<Expression>> child_bound_expressions;
+
+    RC rc = bind_expression(child_expr, child_bound_expressions);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+
+    if (child_bound_expressions.size() != 1) {
+      LOG_WARN("invalid children number of value list expression: %d", child_bound_expressions.size());
+      return RC::INVALID_ARGUMENT;
+    }
+
+    unique_ptr<Expression> &child = child_bound_expressions[0];
+    if (child.get() != child_expr.get()) {
+      child_expr.reset(child.release());
+    }
+  }
+
+  bound_expressions.emplace_back(std::move(expr));
   return RC::SUCCESS;
 }
 

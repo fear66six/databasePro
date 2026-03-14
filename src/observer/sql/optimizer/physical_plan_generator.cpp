@@ -13,7 +13,10 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include "common/log/log.h"
+#include "common/type/data_type.h"
+#include "common/value.h"
 #include "sql/expr/expression.h"
+#include "sql/expr/expression_iterator.h"
 #include "session/session.h"
 #include "sql/operator/aggregate_vec_physical_operator.h"
 #include "sql/operator/calc_logical_operator.h"
@@ -45,6 +48,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/scalar_group_by_physical_operator.h"
 #include "sql/operator/table_scan_vec_physical_operator.h"
 #include "sql/optimizer/physical_plan_generator.h"
+#include "storage/index/index.h"
 
 using namespace std;
 
@@ -159,6 +163,12 @@ RC PhysicalPlanGenerator::create_vec(LogicalOperator &logical_operator, unique_p
 RC PhysicalPlanGenerator::create_plan(TableGetLogicalOperator &table_get_oper, unique_ptr<PhysicalOperator> &oper, Session* session)
 {
   vector<unique_ptr<Expression>> &predicates = table_get_oper.predicates();
+  for (unique_ptr<Expression> &expr : predicates) {
+    ExpressionIterator::for_each_subquery(*expr, [session](SubQueryExpr &sq) {
+      sq.generate_logical_oper();
+      sq.generate_physical_oper(session);
+    });
+  }
   // 看看是否有可以用于索引查找的表达式
   Table *table = table_get_oper.table();
 
@@ -205,19 +215,35 @@ RC PhysicalPlanGenerator::create_plan(TableGetLogicalOperator &table_get_oper, u
   if (index != nullptr) {
     ASSERT(value_expr != nullptr, "got an index but value expr is null ?");
 
-    const Value               &value           = value_expr->get_value();
+    Value index_value = value_expr->get_value();
+    const FieldMeta *field_meta = table->table_meta().field(index->index_meta().field());
+    bool use_index_scan = true;
+    if (field_meta != nullptr && field_meta->type() == AttrType::DATES && index_value.attr_type() == AttrType::CHARS) {
+      Value date_value;
+      RC rc = DataType::type_instance(AttrType::DATES)->set_value_from_str(date_value, index_value.get_string());
+      if (rc != RC::SUCCESS) {
+        // 非法日期：回退到表扫描，以便 predicate 中的 compare_value 能返回 INVALID_ARGUMENT
+        use_index_scan = false;
+      } else {
+        index_value = std::move(date_value);
+      }
+    }
+
+    if (use_index_scan) {
     IndexScanPhysicalOperator *index_scan_oper = new IndexScanPhysicalOperator(table,
         index,
         table_get_oper.read_write_mode(),
-        &value,
+        &index_value,
         true /*left_inclusive*/,
-        &value,
+        &index_value,
         true /*right_inclusive*/);
 
     index_scan_oper->set_predicates(std::move(predicates));
     oper = unique_ptr<PhysicalOperator>(index_scan_oper);
     LOG_TRACE("use index scan");
-  } else {
+    }
+    }
+    if (!oper) {
     auto table_scan_oper = new TableScanPhysicalOperator(table, table_get_oper.read_write_mode());
     table_scan_oper->set_predicates(std::move(predicates));
     oper = unique_ptr<PhysicalOperator>(table_scan_oper);
@@ -245,6 +271,10 @@ RC PhysicalPlanGenerator::create_plan(PredicateLogicalOperator &pred_oper, uniqu
   ASSERT(expressions.size() == 1, "predicate logical operator's children should be 1");
 
   unique_ptr<Expression> expression = std::move(expressions.front());
+  ExpressionIterator::for_each_subquery(*expression, [session](SubQueryExpr &sq) {
+    sq.generate_logical_oper();
+    sq.generate_physical_oper(session);
+  });
   oper = unique_ptr<PhysicalOperator>(new PredicatePhysicalOperator(std::move(expression)));
   oper->add_child(std::move(child_phy_oper));
   return rc;
@@ -410,6 +440,12 @@ RC PhysicalPlanGenerator::create_plan(GroupByLogicalOperator &logical_oper, uniq
 RC PhysicalPlanGenerator::create_vec_plan(TableGetLogicalOperator &table_get_oper, unique_ptr<PhysicalOperator> &oper, Session* session)
 {
   vector<unique_ptr<Expression>> &predicates = table_get_oper.predicates();
+  for (unique_ptr<Expression> &expr : predicates) {
+    ExpressionIterator::for_each_subquery(*expr, [session](SubQueryExpr &sq) {
+      sq.generate_logical_oper();
+      sq.generate_physical_oper(session);
+    });
+  }
   Table *table = table_get_oper.table();
   TableScanVecPhysicalOperator *table_scan_oper = new TableScanVecPhysicalOperator(table, table_get_oper.read_write_mode());
   table_scan_oper->set_predicates(std::move(predicates));
