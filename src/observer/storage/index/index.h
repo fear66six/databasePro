@@ -18,10 +18,12 @@ See the Mulan PSL v2 for more details. */
 #include <vector>
 
 #include "common/sys/rc.h"
+#include "common/lang/vector.h"
 #include "storage/field/field_meta.h"
 #include "storage/index/index_meta.h"
 #include "storage/record/record_manager.h"
 
+class Value;
 class IndexScanner;
 
 /**
@@ -45,6 +47,14 @@ public:
     return RC::UNSUPPORTED;
   }
   virtual RC open(Table *table, const char *file_name, const IndexMeta &index_meta, const FieldMeta &field_meta)
+  {
+    return RC::UNSUPPORTED;
+  }
+  virtual RC create(Table *table, const char *file_name, const IndexMeta &index_meta, const vector<const FieldMeta *> &field_metas)
+  {
+    return RC::UNSUPPORTED;
+  }
+  virtual RC open(Table *table, const char *file_name, const IndexMeta &index_meta, const vector<const FieldMeta *> &field_metas)
   {
     return RC::UNSUPPORTED;
   }
@@ -82,6 +92,9 @@ public:
   virtual IndexScanner *create_scanner(const char *left_key, int left_len, bool left_inclusive, const char *right_key,
       int right_len, bool right_inclusive) = 0;
 
+  /// 多字段索引时，根据首字段等值构建范围扫描的左右边界键。返回键的总长度，0表示非多字段或失败。
+  virtual int build_prefix_range_keys(const Value &first_field_value, char *left_key, char *right_key, int key_buf_size);
+
   /**
    * @brief 同步索引数据到磁盘
    *
@@ -90,10 +103,11 @@ public:
 
 protected:
   RC init(const IndexMeta &index_meta, const FieldMeta &field_meta);
+  RC init(const IndexMeta &index_meta, const vector<const FieldMeta *> &field_metas);
 
 protected:
-  IndexMeta index_meta_;  ///< 索引的元数据
-  FieldMeta field_meta_;  ///< 当前实现仅考虑一个字段的索引
+  IndexMeta           index_meta_;   ///< 索引的元数据
+  vector<FieldMeta>   field_metas_;  ///< 索引字段(支持多字段)
 };
 
 /**

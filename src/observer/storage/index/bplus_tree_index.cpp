@@ -13,6 +13,7 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include "storage/index/bplus_tree_index.h"
+#include "common/lang/span.h"
 #include "common/log/log.h"
 #include "storage/table/table.h"
 #include "storage/db/db.h"
@@ -44,6 +45,52 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
   return RC::SUCCESS;
 }
 
+RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &index_meta, const vector<const FieldMeta *> &field_metas)
+{
+  if (inited_) {
+    LOG_WARN("Failed to create index due to the index has been created before. file_name:%s, index:%s",
+        file_name, index_meta.name());
+    return RC::RECORD_OPENNED;
+  }
+  if (field_metas.empty()) {
+    return RC::INVALID_ARGUMENT;
+  }
+
+  Index::init(index_meta, field_metas);
+
+  vector<std::pair<AttrType, int>> fields;
+  for (const FieldMeta *fm : field_metas) {
+    fields.push_back({fm->type(), fm->len()});
+  }
+
+  BufferPoolManager &bpm = table->db()->buffer_pool_manager();
+  RC rc = bpm.create_file(file_name);
+  if (RC::SUCCESS != rc) {
+    LOG_WARN("Failed to create index file. file_name:%s, rc:%s", file_name, strrc(rc));
+    return rc;
+  }
+
+  DiskBufferPool *bp = nullptr;
+  rc = bpm.open_file(table->db()->log_handler(), file_name, bp);
+  if (RC::SUCCESS != rc) {
+    LOG_WARN("Failed to open index file. file_name:%s, rc:%s", file_name, strrc(rc));
+    return rc;
+  }
+
+  rc = index_handler_.create(table->db()->log_handler(), *bp, span<const std::pair<AttrType, int>>(fields.data(), fields.size()));
+  if (RC::SUCCESS != rc) {
+    bpm.close_file(file_name);
+    LOG_WARN("Failed to create index_handler, file_name:%s, index:%s, rc:%s",
+        file_name, index_meta.name(), strrc(rc));
+    return rc;
+  }
+
+  inited_ = true;
+  table_  = table;
+  LOG_INFO("Successfully create multi-field index, file_name:%s, index:%s", file_name, index_meta.name());
+  return RC::SUCCESS;
+}
+
 RC BplusTreeIndex::open(Table *table, const char *file_name, const IndexMeta &index_meta, const FieldMeta &field_meta)
 {
   if (inited_) {
@@ -69,6 +116,33 @@ RC BplusTreeIndex::open(Table *table, const char *file_name, const IndexMeta &in
   return RC::SUCCESS;
 }
 
+RC BplusTreeIndex::open(Table *table, const char *file_name, const IndexMeta &index_meta, const vector<const FieldMeta *> &field_metas)
+{
+  if (inited_) {
+    LOG_WARN("Failed to open index due to the index has been inited before. file_name:%s, index:%s",
+        file_name, index_meta.name());
+    return RC::RECORD_OPENNED;
+  }
+  if (field_metas.empty()) {
+    return RC::INVALID_ARGUMENT;
+  }
+
+  Index::init(index_meta, field_metas);
+
+  BufferPoolManager &bpm = table->db()->buffer_pool_manager();
+  RC rc = index_handler_.open(table->db()->log_handler(), bpm, file_name);
+  if (RC::SUCCESS != rc) {
+    LOG_WARN("Failed to open index_handler, file_name:%s, index:%s, rc:%s",
+        file_name, index_meta.name(), strrc(rc));
+    return rc;
+  }
+
+  inited_ = true;
+  table_  = table;
+  LOG_INFO("Successfully open multi-field index, file_name:%s, index:%s", file_name, index_meta.name());
+  return RC::SUCCESS;
+}
+
 RC BplusTreeIndex::close()
 {
   if (inited_) {
@@ -82,12 +156,38 @@ RC BplusTreeIndex::close()
 
 RC BplusTreeIndex::insert_entry(const char *record, const RID *rid)
 {
-  return index_handler_.insert_entry(record + field_meta_.offset(), rid);
+  if (field_metas_.size() == 1) {
+    return index_handler_.insert_entry(record + field_metas_[0].offset(), rid);
+  }
+  char key_buf[256];
+  int  offset = 0;
+  for (const FieldMeta &fm : field_metas_) {
+    if (offset + fm.len() > (int)sizeof(key_buf)) {
+      LOG_WARN("composite key too long");
+      return RC::INTERNAL;
+    }
+    memcpy(key_buf + offset, record + fm.offset(), fm.len());
+    offset += fm.len();
+  }
+  return index_handler_.insert_entry(key_buf, rid);
 }
 
 RC BplusTreeIndex::delete_entry(const char *record, const RID *rid)
 {
-  return index_handler_.delete_entry(record + field_meta_.offset(), rid);
+  if (field_metas_.size() == 1) {
+    return index_handler_.delete_entry(record + field_metas_[0].offset(), rid);
+  }
+  char key_buf[256];
+  int  offset = 0;
+  for (const FieldMeta &fm : field_metas_) {
+    if (offset + fm.len() > (int)sizeof(key_buf)) {
+      LOG_WARN("composite key too long");
+      return RC::INTERNAL;
+    }
+    memcpy(key_buf + offset, record + fm.offset(), fm.len());
+    offset += fm.len();
+  }
+  return index_handler_.delete_entry(key_buf, rid);
 }
 
 IndexScanner *BplusTreeIndex::create_scanner(

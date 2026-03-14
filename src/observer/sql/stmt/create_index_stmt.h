@@ -23,27 +23,31 @@ class FieldMeta;
 /**
  * @brief 创建索引的语句
  * @ingroup Statement
+ * @details 支持单字段和多字段索引
  */
 class CreateIndexStmt : public Stmt
 {
 public:
-  CreateIndexStmt(Table *table, const FieldMeta *field_meta, const string &index_name)
-      : table_(table), field_meta_(field_meta), index_name_(index_name)
+  CreateIndexStmt(Table *table, const vector<const FieldMeta *> &field_metas, const string &index_name)
+      : table_(table), field_metas_(field_metas), index_name_(index_name)
   {}
 
   virtual ~CreateIndexStmt() = default;
 
   StmtType type() const override { return StmtType::CREATE_INDEX; }
 
-  Table           *table() const { return table_; }
-  const FieldMeta *field_meta() const { return field_meta_; }
-  const string    &index_name() const { return index_name_; }
+  Table                            *table() const { return table_; }
+  const vector<const FieldMeta *>   &field_metas() const { return field_metas_; }
+  const string                     &index_name() const { return index_name_; }
+
+  /// 兼容单字段接口，返回第一个字段
+  const FieldMeta *field_meta() const { return field_metas_.empty() ? nullptr : field_metas_[0]; }
 
 public:
   static RC create(Db *db, const CreateIndexSqlNode &create_index, Stmt *&stmt);
 
 private:
-  Table           *table_      = nullptr;
-  const FieldMeta *field_meta_ = nullptr;
-  string           index_name_;
+  Table                         *table_       = nullptr;
+  vector<const FieldMeta *>      field_metas_;
+  string                         index_name_;
 };

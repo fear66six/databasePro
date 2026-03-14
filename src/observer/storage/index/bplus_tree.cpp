@@ -15,6 +15,8 @@ See the Mulan PSL v2 for more details. */
 
 #include "storage/index/bplus_tree.h"
 #include "common/lang/lower_bound.h"
+#include "common/lang/span.h"
+#include "common/lang/vector.h"
 #include "common/log/log.h"
 #include "common/global_context.h"
 #include "sql/parser/parse_defs.h"
@@ -862,13 +864,16 @@ RC BplusTreeHandler::create(LogHandler &log_handler,
     return RC::INTERNAL;
   }
 
-  char            *pdata         = header_frame->data();
-  IndexFileHeader *file_header   = (IndexFileHeader *)pdata;
-  file_header->attr_length       = attr_length;
-  file_header->key_length        = attr_length + sizeof(RID);
-  file_header->attr_type         = attr_type;
+  char            *pdata       = header_frame->data();
+  IndexFileHeader *file_header = (IndexFileHeader *)pdata;
+  file_header->attr_length     = attr_length;
+  file_header->key_length      = attr_length + sizeof(RID);
+  file_header->attr_type       = attr_type;
+  file_header->field_count     = 1;
+  file_header->field_types[0]  = attr_type;
+  file_header->field_lengths[0] = attr_length;
   file_header->internal_max_size = internal_max_size;
-  file_header->leaf_max_size     = leaf_max_size;
+  file_header->leaf_max_size      = leaf_max_size;
   file_header->root_page         = BP_INVALID_PAGE_NUM;
 
   // 取消记录日志的原因请参考下面的sync调用的地方。
@@ -901,6 +906,87 @@ RC BplusTreeHandler::create(LogHandler &log_handler,
   }
 
   LOG_INFO("Successfully create index");
+  return RC::SUCCESS;
+}
+
+RC BplusTreeHandler::create(LogHandler &log_handler,
+    DiskBufferPool &buffer_pool,
+    span<const std::pair<AttrType, int>> fields,
+    int internal_max_size /* = -1 */,
+    int leaf_max_size /* = -1 */)
+{
+  if (fields.empty()) {
+    LOG_WARN("invalid empty fields for multi-field index");
+    return RC::INVALID_ARGUMENT;
+  }
+  int attr_length = 0;
+  for (const auto &f : fields) {
+    attr_length += f.second;
+  }
+  if (internal_max_size < 0) {
+    internal_max_size = calc_internal_page_capacity(attr_length);
+  }
+  if (leaf_max_size < 0) {
+    leaf_max_size = calc_leaf_page_capacity(attr_length);
+  }
+
+  log_handler_      = &log_handler;
+  disk_buffer_pool_ = &buffer_pool;
+
+  RC rc = RC::SUCCESS;
+
+  BplusTreeMiniTransaction mtr(*this, &rc);
+
+  Frame *header_frame = nullptr;
+
+  rc = mtr.latch_memo().allocate_page(header_frame);
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to allocate header page for bplus tree. rc=%d:%s", rc, strrc(rc));
+    return rc;
+  }
+
+  if (header_frame->page_num() != FIRST_INDEX_PAGE) {
+    LOG_WARN("header page num should be %d but got %d. is it a new file",
+             FIRST_INDEX_PAGE, header_frame->page_num());
+    return RC::INTERNAL;
+  }
+
+  char            *pdata       = header_frame->data();
+  IndexFileHeader *file_header = (IndexFileHeader *)pdata;
+  file_header->attr_length     = attr_length;
+  file_header->key_length      = attr_length + sizeof(RID);
+  file_header->attr_type       = fields[0].first;
+  file_header->field_count     = static_cast<int32_t>(fields.size());
+  for (size_t i = 0; i < fields.size() && i < INDEX_MAX_FIELDS; i++) {
+    file_header->field_types[i]   = fields[i].first;
+    file_header->field_lengths[i] = fields[i].second;
+  }
+  file_header->internal_max_size = internal_max_size;
+  file_header->leaf_max_size      = leaf_max_size;
+  file_header->root_page         = BP_INVALID_PAGE_NUM;
+
+  header_frame->mark_dirty();
+
+  memcpy(&file_header_, pdata, sizeof(file_header_));
+  header_dirty_ = false;
+
+  mem_pool_item_ = make_unique<common::MemPoolItem>("b+tree");
+  if (mem_pool_item_->init(file_header->key_length) < 0) {
+    LOG_WARN("Failed to init memory pool for index");
+    close();
+    return RC::NOMEM;
+  }
+
+  key_comparator_.init(fields);
+  key_printer_.init(fields);
+
+  rc = this->sync();
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to sync index header. rc=%d:%s", rc, strrc(rc));
+    return rc;
+  }
+
+  LOG_INFO("Successfully create multi-field index");
   return RC::SUCCESS;
 }
 
@@ -958,8 +1044,17 @@ RC BplusTreeHandler::open(LogHandler &log_handler, DiskBufferPool &buffer_pool)
   // close old page_handle
   buffer_pool.unpin_page(frame);
 
-  key_comparator_.init(file_header_.attr_type, file_header_.attr_length);
-  key_printer_.init(file_header_.attr_type, file_header_.attr_length);
+  if (file_header_.field_count > 1) {
+    vector<std::pair<AttrType, int>> fields;
+    for (int i = 0; i < file_header_.field_count && i < INDEX_MAX_FIELDS; i++) {
+      fields.push_back({file_header_.field_types[i], file_header_.field_lengths[i]});
+    }
+    key_comparator_.init(span<const std::pair<AttrType, int>>(fields.data(), fields.size()));
+    key_printer_.init(span<const std::pair<AttrType, int>>(fields.data(), fields.size()));
+  } else {
+    key_comparator_.init(file_header_.attr_type, file_header_.attr_length);
+    key_printer_.init(file_header_.attr_type, file_header_.attr_length);
+  }
   LOG_INFO("Successfully open index");
   return RC::SUCCESS;
 }

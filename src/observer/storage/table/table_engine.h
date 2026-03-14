@@ -12,6 +12,8 @@ See the Mulan PSL v2 for more details. */
 
 #include "common/types.h"
 #include "common/lang/functional.h"
+#include "common/lang/vector.h"
+#include "storage/field/field_meta.h"
 #include "storage/table/table_meta.h"
 #include "storage/common/chunk.h"
 
@@ -47,6 +49,7 @@ public:
   virtual RC get_record(const RID &rid, Record &record)                                           = 0;
 
   virtual RC     create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name) = 0;
+  virtual RC     create_index(Trx *trx, const vector<const FieldMeta *> &field_metas, const char *index_name) { return RC::UNIMPLEMENTED; }
   virtual RC     get_record_scanner(RecordScanner *&scanner, Trx *trx, ReadWriteMode mode)   = 0;
   virtual RC     get_chunk_scanner(ChunkFileScanner &scanner, Trx *trx, ReadWriteMode mode)  = 0;
   virtual RC     visit_record(const RID &rid, function<bool(Record &)> visitor)              = 0;

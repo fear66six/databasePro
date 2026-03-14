@@ -21,6 +21,8 @@ See the Mulan PSL v2 for more details. */
 #include "storage/record/lob_handler.h"
 #include "common/types.h"
 #include "common/lang/span.h"
+#include "common/lang/vector.h"
+#include "storage/field/field_meta.h"
 #include "common/lang/functional.h"
 
 struct RID;
@@ -96,6 +98,7 @@ public:
 
   // TODO refactor
   RC create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name);
+  RC create_index(Trx *trx, const vector<const FieldMeta *> &field_metas, const char *index_name);
 
   RC get_record_scanner(RecordScanner *&scanner, Trx *trx, ReadWriteMode mode);
 

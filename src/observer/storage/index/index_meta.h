@@ -16,6 +16,7 @@ See the Mulan PSL v2 for more details. */
 
 #include "common/sys/rc.h"
 #include "common/lang/string.h"
+#include "common/lang/vector.h"
 
 class TableMeta;
 class FieldMeta;
@@ -28,6 +29,7 @@ class Value;
  * @brief 描述一个索引
  * @ingroup Index
  * @details 一个索引包含了表的哪些字段，索引的名称等。
+ * 支持单字段和多字段索引。
  * 如果以后实现了多种类型的索引，还需要记录索引的类型，对应类型的一些元数据等
  */
 class IndexMeta
@@ -36,10 +38,13 @@ public:
   IndexMeta() = default;
 
   RC init(const char *name, const FieldMeta &field);
+  RC init(const char *name, const vector<const FieldMeta *> &fields);
 
 public:
   const char *name() const;
-  const char *field() const;
+  const char *field() const;   ///< 返回第一个字段名，兼容单字段接口
+  int         field_count() const { return static_cast<int>(fields_.size()); }
+  const char *field(int i) const;
 
   void desc(ostream &os) const;
 
@@ -48,6 +53,6 @@ public:
   static RC from_json(const TableMeta &table, const Json::Value &json_value, IndexMeta &index);
 
 protected:
-  string name_;   // index's name
-  string field_;  // field's name
+  string         name_;    // index's name
+  vector<string> fields_;  // field names (support multi-field)
 };

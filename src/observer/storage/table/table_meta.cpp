@@ -159,7 +159,8 @@ const IndexMeta *TableMeta::index(const char *name) const
 const IndexMeta *TableMeta::find_index_by_field(const char *field) const
 {
   for (const IndexMeta &index : indexes_) {
-    if (0 == strcmp(index.field(), field)) {
+    // 多字段索引：若该字段是索引的第一个字段，则可用于索引扫描
+    if (index.field_count() > 0 && 0 == strcmp(index.field(0), field)) {
       return &index;
     }
   }

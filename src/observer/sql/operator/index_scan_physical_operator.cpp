@@ -45,12 +45,21 @@ RC IndexScanPhysicalOperator::open(Trx *trx)
   }
   table_->add_ref();
 
-  IndexScanner *index_scanner = index_->create_scanner(left_value_.data(),
-      left_value_.length(),
-      left_inclusive_,
-      right_value_.data(),
-      right_value_.length(),
-      right_inclusive_);
+  const char *left_key   = left_value_.data();
+  int         left_len   = left_value_.length();
+  const char *right_key  = right_value_.data();
+  int         right_len  = right_value_.length();
+  char        left_buf[256];
+  char        right_buf[256];
+
+  int prefix_len = index_->build_prefix_range_keys(left_value_, left_buf, right_buf, sizeof(left_buf));
+  if (prefix_len > 0) {
+    left_key  = left_buf;
+    right_key = right_buf;
+    left_len = right_len = prefix_len;
+  }
+
+  IndexScanner *index_scanner = index_->create_scanner(left_key, left_len, left_inclusive_, right_key, right_len, right_inclusive_);
   if (nullptr == index_scanner) {
     LOG_WARN("failed to create index scanner");
     return RC::INTERNAL;

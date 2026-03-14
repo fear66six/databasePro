@@ -18,8 +18,10 @@ See the Mulan PSL v2 for more details. */
 #pragma once
 
 #include <string.h>
+#include <vector>
 
 #include "common/lang/comparator.h"
+#include "common/lang/span.h"
 #include "common/lang/memory.h"
 #include "common/lang/sstream.h"
 #include "common/lang/functional.h"
@@ -58,27 +60,52 @@ class AttrComparator
 public:
   void init(AttrType type, int length)
   {
-    attr_type_   = type;
+    field_types_.clear();
+    field_lengths_.clear();
+    field_types_.push_back(type);
+    field_lengths_.push_back(length);
     attr_length_ = length;
+  }
+
+  void init(span<const std::pair<AttrType, int>> fields)
+  {
+    field_types_.clear();
+    field_lengths_.clear();
+    attr_length_ = 0;
+    for (const auto &f : fields) {
+      field_types_.push_back(f.first);
+      field_lengths_.push_back(f.second);
+      attr_length_ += f.second;
+    }
   }
 
   int attr_length() const { return attr_length_; }
 
   int operator()(const char *v1, const char *v2) const
   {
-    // TODO: optimized the comparison
-    Value left;
-    left.set_type(attr_type_);
-    left.set_data(v1, attr_length_);
-    Value right;
-    right.set_type(attr_type_);
-    right.set_data(v2, attr_length_);
-    return DataType::type_instance(attr_type_)->compare(left, right);
+    int offset = 0;
+    for (size_t i = 0; i < field_types_.size(); i++) {
+      AttrType type   = field_types_[i];
+      int      len    = field_lengths_[i];
+      Value    left;
+      left.set_type(type);
+      left.set_data(v1 + offset, len);
+      Value right;
+      right.set_type(type);
+      right.set_data(v2 + offset, len);
+      int result = DataType::type_instance(type)->compare(left, right);
+      if (result != 0) {
+        return result;
+      }
+      offset += len;
+    }
+    return 0;
   }
 
 private:
-  AttrType attr_type_;
-  int      attr_length_;
+  std::vector<AttrType> field_types_;
+  std::vector<int>      field_lengths_;
+  int                   attr_length_ = 0;
 };
 
 /**
@@ -90,6 +117,8 @@ class KeyComparator
 {
 public:
   void init(AttrType type, int length) { attr_comparator_.init(type, length); }
+
+  void init(span<const std::pair<AttrType, int>> fields) { attr_comparator_.init(fields); }
 
   const AttrComparator &attr_comparator() const { return attr_comparator_; }
 
@@ -118,21 +147,44 @@ class AttrPrinter
 public:
   void init(AttrType type, int length)
   {
-    attr_type_   = type;
+    field_types_.clear();
+    field_lengths_.clear();
+    field_types_.push_back(type);
+    field_lengths_.push_back(length);
     attr_length_ = length;
+  }
+
+  void init(span<const std::pair<AttrType, int>> fields)
+  {
+    field_types_.clear();
+    field_lengths_.clear();
+    attr_length_ = 0;
+    for (const auto &f : fields) {
+      field_types_.push_back(f.first);
+      field_lengths_.push_back(f.second);
+      attr_length_ += f.second;
+    }
   }
 
   int attr_length() const { return attr_length_; }
 
   string operator()(const char *v) const
   {
-    Value value(attr_type_, const_cast<char *>(v), attr_length_);
-    return value.to_string();
+    stringstream ss;
+    int          offset = 0;
+    for (size_t i = 0; i < field_types_.size(); i++) {
+      if (i > 0) ss << ",";
+      Value value(field_types_[i], const_cast<char *>(v + offset), field_lengths_[i]);
+      ss << value.to_string();
+      offset += field_lengths_[i];
+    }
+    return ss.str();
   }
 
 private:
-  AttrType attr_type_;
-  int      attr_length_;
+  std::vector<AttrType> field_types_;
+  std::vector<int>      field_lengths_;
+  int                   attr_length_ = 0;
 };
 
 /**
@@ -143,6 +195,8 @@ class KeyPrinter
 {
 public:
   void init(AttrType type, int length) { attr_printer_.init(type, length); }
+
+  void init(span<const std::pair<AttrType, int>> fields) { attr_printer_.init(fields); }
 
   const AttrPrinter &attr_printer() const { return attr_printer_; }
 
@@ -160,11 +214,13 @@ private:
   AttrPrinter attr_printer_;
 };
 
+constexpr int INDEX_MAX_FIELDS = 8;
+
 /**
  * @brief the meta information of bplus tree
  * @ingroup BPlusTree
  * @details this is the first page of bplus tree.
- * only one field can be supported, can you extend it to multi-fields?
+ * 支持单字段和多字段索引。field_count=0或1时使用attr_type/attr_length(向后兼容)。
  */
 struct IndexFileHeader
 {
@@ -173,12 +229,15 @@ struct IndexFileHeader
     memset(this, 0, sizeof(IndexFileHeader));
     root_page = BP_INVALID_PAGE_NUM;
   }
-  PageNum  root_page;          ///< 根节点在磁盘中的页号
-  int32_t  internal_max_size;  ///< 内部节点最大的键值对数
-  int32_t  leaf_max_size;      ///< 叶子节点最大的键值对数
-  int32_t  attr_length;        ///< 键值的长度
-  int32_t  key_length;         ///< attr length + sizeof(RID)
-  AttrType attr_type;          ///< 键值的类型
+  PageNum   root_page;          ///< 根节点在磁盘中的页号
+  int32_t   internal_max_size;  ///< 内部节点最大的键值对数
+  int32_t   leaf_max_size;      ///< 叶子节点最大的键值对数
+  int32_t   attr_length;        ///< 键值的长度(所有字段长度之和)
+  int32_t   key_length;         ///< attr length + sizeof(RID)
+  AttrType  attr_type;          ///< 单字段时使用；多字段时为第一个字段类型
+  int32_t   field_count;        ///< 字段数，0或1=单字段，>1=多字段
+  AttrType  field_types[INDEX_MAX_FIELDS];   ///< 多字段时各字段类型
+  int32_t   field_lengths[INDEX_MAX_FIELDS]; ///< 多字段时各字段长度
 
   const string to_string() const
   {
@@ -187,6 +246,7 @@ struct IndexFileHeader
     ss << "attr_length:" << attr_length << ","
        << "key_length:" << key_length << ","
        << "attr_type:" << attr_type_to_string(attr_type) << ","
+       << "field_count:" << field_count << ","
        << "root_page:" << root_page << ","
        << "internal_max_size:" << internal_max_size << ","
        << "leaf_max_size:" << leaf_max_size << ";";
@@ -462,6 +522,9 @@ public:
   RC create(LogHandler &log_handler, BufferPoolManager &bpm, const char *file_name, AttrType attr_type, int attr_length,
       int internal_max_size = -1, int leaf_max_size = -1);
   RC create(LogHandler &log_handler, DiskBufferPool &buffer_pool, AttrType attr_type, int attr_length,
+      int internal_max_size = -1, int leaf_max_size = -1);
+  /// 多字段索引
+  RC create(LogHandler &log_handler, DiskBufferPool &buffer_pool, span<const std::pair<AttrType, int>> fields,
       int internal_max_size = -1, int leaf_max_size = -1);
 
   /**
