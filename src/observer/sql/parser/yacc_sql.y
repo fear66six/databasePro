@@ -7,6 +7,7 @@
 
 #include "common/log/log.h"
 #include "common/lang/string.h"
+#include "common/sys/rc.h"
 #include "sql/parser/parse_defs.h"
 #include "sql/parser/yacc_sql.hpp"
 #include "sql/parser/lex_sql.h"
@@ -46,6 +47,23 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
                                            YYLTYPE *llocp)
 {
   UnboundAggregateExpr *expr = new UnboundAggregateExpr(aggregate_name, child);
+  expr->set_name(token_name(sql_string, llocp));
+  return expr;
+}
+
+Expression *create_func_expr(FunctionExpr::Type func_type,
+                            vector<unique_ptr<Expression>> *args,
+                            const char *sql_string,
+                            YYLTYPE *llocp)
+{
+  vector<unique_ptr<Expression>> children;
+  if (args != nullptr) {
+    for (auto &a : *args) {
+      children.push_back(std::move(a));
+    }
+    delete args;
+  }
+  FunctionExpr *expr = new FunctionExpr(func_type, std::move(children));
   expr->set_name(token_name(sql_string, llocp));
   return expr;
 }
@@ -125,6 +143,9 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         INNER
         JOIN
         OR
+        LENGTH
+        ROUND
+        DATE_FORMAT
 
 /** union 中定义各种数据类型，真实生成的代码也是union类型，所以不能有非POD类型的数据 **/
 %union {
@@ -194,6 +215,7 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
 %type <on_condition>        on_condition
 %type <expression>          expression
 %type <expression>          aggregate_expression
+%type <expression>          func_expr
 %type <expression>          sub_query_expr
 %type <expression_list>     expression_list
 %type <expression_list>     group_by
@@ -538,6 +560,14 @@ select_stmt:        /*  select 语句的语法解析树*/
         delete $7;
       }
     }
+    | SELECT expression_list
+    {
+      $$ = new ParsedSqlNode(SCF_SELECT);
+      if ($2 != nullptr) {
+        $$->selection.expressions.swap(*$2);
+        delete $2;
+      }
+    }
     ;
 calc_stmt:
     CALC expression_list
@@ -601,8 +631,15 @@ expression:
     | aggregate_expression {
       $$ = $1;
     }
+    | func_expr {
+      $$ = $1;
+    }
     | sub_query_expr {
       $$ = $1;
+    }
+    | expression ID {
+      $$ = $1;
+      $$->set_name($2);
     }
     ;
 
@@ -617,6 +654,18 @@ sub_query_expr:
 aggregate_expression:
     ID LBRACE expression RBRACE {
       $$ = create_aggregate_expression($1, $3, sql_string, &@$);
+    }
+    ;
+
+func_expr:
+    LENGTH LBRACE expression_list RBRACE {
+      $$ = create_func_expr(FunctionExpr::Type::LENGTH, $3, sql_string, &@$);
+    }
+    | ROUND LBRACE expression_list RBRACE {
+      $$ = create_func_expr(FunctionExpr::Type::ROUND, $3, sql_string, &@$);
+    }
+    | DATE_FORMAT LBRACE expression_list RBRACE {
+      $$ = create_func_expr(FunctionExpr::Type::DATE_FORMAT, $3, sql_string, &@$);
     }
     ;
 

@@ -188,6 +188,13 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
   unique_ptr<LogicalOperator> project_oper = make_unique<ProjectLogicalOperator>(std::move(select_stmt->query_expressions()));
   if (*last_oper) {
     project_oper->add_child(std::move(*last_oper));
+  } else {
+    // SELECT without FROM: add Calc to produce one row (like SELECT 1 in MySQL)
+    vector<unique_ptr<Expression>> calc_exprs;
+    for (const unique_ptr<Expression> &e : project_oper->expressions()) {
+      calc_exprs.push_back(e->copy());
+    }
+    project_oper->add_child(make_unique<CalcLogicalOperator>(std::move(calc_exprs)));
   }
 
   last_oper = &project_oper;

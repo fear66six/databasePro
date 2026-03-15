@@ -46,7 +46,10 @@ RC ExprVecPhysicalOperator::next(Chunk &chunk)
   if (OB_SUCC(rc = child.next(chunk_))) {
     for (size_t i = 0; i < expressions_.size(); i++) {
       auto column = make_unique<Column>();
-      expressions_[i]->get_column(chunk_, *column);
+      rc = expressions_[i]->get_column(chunk_, *column);
+      if (OB_FAIL(rc)) {
+        return rc;
+      }
       evaled_chunk_.add_column(std::move(column), i);
     }
     chunk.reference(evaled_chunk_);

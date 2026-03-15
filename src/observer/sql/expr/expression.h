@@ -43,6 +43,7 @@ enum class ExprType
   STAR,                 ///< 星号，表示所有字段
   UNBOUND_FIELD,        ///< 未绑定的字段，需要在resolver阶段解析为FieldExpr
   UNBOUND_AGGREGATION,  ///< 未绑定的聚合函数，需要在resolver阶段解析为AggregateExpr
+  UNBOUND_FUNCTION,     ///< 未绑定的标量函数，需要在resolver阶段解析为FunctionExpr
 
   FIELD,        ///< 字段。在实际执行时，根据行数据内容提取对应字段的值
   VALUE,        ///< 常量值
@@ -51,6 +52,7 @@ enum class ExprType
   CONJUNCTION,  ///< 多个表达式使用同一种关系(AND或OR)来联结
   ARITHMETIC,   ///< 算术运算
   AGGREGATION,  ///< 聚合运算
+  FUNCTION,     ///< 标量函数 (length, round, date_format)
   SUBQUERY,    ///< 子查询
   VALUE_LIST,   ///< IN (val1, val2, ...) 的值列表
 };
@@ -470,6 +472,80 @@ public:
 private:
   string                 aggregate_name_;
   unique_ptr<Expression> child_;
+};
+
+/**
+ * @brief 未绑定的标量函数表达式 (length, round, date_format)
+ * @ingroup Expression
+ */
+class UnboundFunctionExpr : public Expression
+{
+public:
+  UnboundFunctionExpr(const char *func_name, vector<unique_ptr<Expression>> &&children);
+  virtual ~UnboundFunctionExpr() = default;
+
+  ExprType type() const override { return ExprType::UNBOUND_FUNCTION; }
+
+  unique_ptr<Expression> copy() const override;
+
+  const char *func_name() const { return func_name_.c_str(); }
+
+  vector<unique_ptr<Expression>> &children() { return children_; }
+  const vector<unique_ptr<Expression>> &children() const { return children_; }
+
+  RC       get_value(const Tuple &tuple, Value &value) const override { return RC::INTERNAL; }
+  AttrType value_type() const override { return AttrType::UNDEFINED; }
+
+private:
+  string                          func_name_;
+  vector<unique_ptr<Expression>> children_;
+};
+
+/**
+ * @brief 标量函数表达式 (length, round, date_format)
+ * @ingroup Expression
+ */
+class FunctionExpr : public Expression
+{
+public:
+  enum class Type
+  {
+    LENGTH,
+    ROUND,
+    DATE_FORMAT,
+  };
+
+public:
+  FunctionExpr(Type func_type, vector<unique_ptr<Expression>> &&children);
+  virtual ~FunctionExpr() = default;
+
+  unique_ptr<Expression> copy() const override;
+
+  ExprType type() const override { return ExprType::FUNCTION; }
+  AttrType value_type() const override;
+  int      value_length() const override;
+
+  RC get_value(const Tuple &tuple, Value &value) const override;
+  RC try_get_value(Value &value) const override;
+  RC get_column(Chunk &chunk, Column &column) override;
+
+  Type func_type() const { return func_type_; }
+
+  unique_ptr<Expression> &child(size_t i) { return children_[i]; }
+  const unique_ptr<Expression> &child(size_t i) const { return children_[i]; }
+  size_t child_count() const { return children_.size(); }
+
+  static RC type_from_string(const char *type_str, Type &type);
+
+private:
+  RC eval_length(const Value &arg, Value &result) const;
+  RC eval_round(const Value &arg, Value &result) const;
+  RC eval_round(const Value &arg, const Value &precision_arg, Value &result) const;
+  RC eval_date_format(const Value &date_val, const Value &format_val, Value &result) const;
+
+private:
+  Type                            func_type_;
+  vector<unique_ptr<Expression>> children_;
 };
 
 class AggregateExpr : public Expression

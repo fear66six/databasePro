@@ -63,6 +63,21 @@ RC ExpressionIterator::iterate_child_expr(Expression &expr, function<RC(unique_p
       rc = callback(aggregate_expr.child());
     } break;
 
+    case ExprType::FUNCTION: {
+      auto &func_expr = static_cast<FunctionExpr &>(expr);
+      for (size_t i = 0; i < func_expr.child_count() && OB_SUCC(rc); i++) {
+        rc = callback(func_expr.child(i));
+      }
+    } break;
+
+    case ExprType::UNBOUND_FUNCTION: {
+      auto &func_expr = static_cast<UnboundFunctionExpr &>(expr);
+      for (auto &child : func_expr.children()) {
+        rc = callback(child);
+        if (OB_FAIL(rc)) break;
+      }
+    } break;
+
     case ExprType::SUBQUERY: {
       // SubQueryExpr has no child expressions to iterate
     } break;

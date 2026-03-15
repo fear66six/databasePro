@@ -18,6 +18,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/expr/arithmetic_operator.hpp"
 #include "storage/common/column.h"
 #include "common/type/data_type.h"
+#include <cmath>
 #include <functional>
 #include <regex>
 #include <string>
@@ -856,4 +857,340 @@ RC AggregateExpr::type_from_string(const char *type_str, AggregateExpr::Type &ty
     rc = RC::INVALID_ARGUMENT;
   }
   return rc;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+UnboundFunctionExpr::UnboundFunctionExpr(const char *func_name, vector<unique_ptr<Expression>> &&children)
+    : func_name_(func_name), children_(std::move(children))
+{}
+
+unique_ptr<Expression> UnboundFunctionExpr::copy() const
+{
+  vector<unique_ptr<Expression>> copies;
+  for (const auto &c : children_) {
+    copies.push_back(c->copy());
+  }
+  return make_unique<UnboundFunctionExpr>(func_name_.c_str(), std::move(copies));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+FunctionExpr::FunctionExpr(Type func_type, vector<unique_ptr<Expression>> &&children)
+    : func_type_(func_type), children_(std::move(children))
+{}
+
+unique_ptr<Expression> FunctionExpr::copy() const
+{
+  vector<unique_ptr<Expression>> copies;
+  for (const auto &c : children_) {
+    copies.push_back(c->copy());
+  }
+  return make_unique<FunctionExpr>(func_type_, std::move(copies));
+}
+
+AttrType FunctionExpr::value_type() const
+{
+  switch (func_type_) {
+    case Type::LENGTH: return AttrType::INTS;
+    case Type::ROUND: return (children_.size() == 2) ? AttrType::FLOATS : AttrType::INTS;
+    case Type::DATE_FORMAT: return AttrType::CHARS;
+    default: return AttrType::UNDEFINED;
+  }
+}
+
+int FunctionExpr::value_length() const
+{
+  switch (func_type_) {
+    case Type::LENGTH: return sizeof(int);
+    case Type::ROUND: return (children_.size() == 2) ? sizeof(float) : sizeof(int);
+    case Type::DATE_FORMAT: return 32;  // 格式化后的日期字符串最大长度
+    default: return -1;
+  }
+}
+
+RC FunctionExpr::eval_length(const Value &arg, Value &result) const
+{
+  if (arg.attr_type() != AttrType::CHARS) {
+    return RC::INVALID_ARGUMENT;
+  }
+  int len = static_cast<int>(arg.get_string().length());
+  result.set_int(len);
+  return RC::SUCCESS;
+}
+
+RC FunctionExpr::eval_round(const Value &arg, Value &result) const
+{
+  if (arg.attr_type() != AttrType::FLOATS) {
+    return RC::INVALID_ARGUMENT;
+  }
+  float val = arg.get_float();
+  int rounded = static_cast<int>(roundf(val));
+  result.set_int(rounded);
+  return RC::SUCCESS;
+}
+
+RC FunctionExpr::eval_round(const Value &arg, const Value &precision_arg, Value &result) const
+{
+  if (arg.attr_type() != AttrType::FLOATS) {
+    return RC::INVALID_ARGUMENT;
+  }
+  int prec = 0;
+  if (precision_arg.attr_type() == AttrType::INTS) {
+    prec = precision_arg.get_int();
+  } else if (precision_arg.attr_type() == AttrType::FLOATS) {
+    prec = static_cast<int>(precision_arg.get_float());
+  } else {
+    return RC::INVALID_ARGUMENT;
+  }
+  if (prec < 0) {
+    return RC::INVALID_ARGUMENT;
+  }
+  float val = arg.get_float();
+  float factor = powf(10.0f, static_cast<float>(prec));
+  float rounded = roundf(val * factor) / factor;
+  result.set_float(rounded);
+  return RC::SUCCESS;
+}
+
+RC FunctionExpr::eval_date_format(const Value &date_val, const Value &format_val, Value &result) const
+{
+  Value actual_date;
+  if (date_val.attr_type() == AttrType::DATES) {
+    actual_date = date_val;
+  } else if (date_val.attr_type() == AttrType::CHARS) {
+    RC rc = DataType::type_instance(AttrType::DATES)->set_value_from_str(actual_date, date_val.get_string());
+    if (rc != RC::SUCCESS) {
+      return RC::INVALID_ARGUMENT;
+    }
+  } else {
+    return RC::INVALID_ARGUMENT;
+  }
+  if (format_val.attr_type() != AttrType::CHARS) {
+    return RC::INVALID_ARGUMENT;
+  }
+
+  int32_t encoded = actual_date.get_date();
+  int year = encoded / 10000;
+  int month = (encoded / 100) % 100;
+  int day = encoded % 100;
+
+  static const char *MONTH_NAMES[] = {
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  };
+
+  const string &fmt = format_val.get_string();
+  string out;
+  for (size_t i = 0; i < fmt.size(); i++) {
+    if (fmt[i] == '%' && i + 1 < fmt.size()) {
+      int two_digit = 0;
+      switch (fmt[i + 1]) {
+        case 'Y': out += std::to_string(year); break;
+        case 'y':
+          two_digit = (year >= 2000) ? (year - 2000) : (year - 1900);
+          out += (two_digit < 10 ? "0" : "") + std::to_string(two_digit);
+          break;
+        case 'm': out += (month < 10 ? "0" : "") + std::to_string(month); break;
+        case 'M': out += (month >= 1 && month <= 12) ? MONTH_NAMES[month - 1] : std::to_string(month); break;
+        case 'c': out += std::to_string(month); break;
+        case 'd': out += (day < 10 ? "0" : "") + std::to_string(day); break;
+        case 'D': {
+          string suffix;
+          if (day >= 11 && day <= 13) {
+            suffix = "th";
+          } else {
+            switch (day % 10) {
+              case 1: suffix = "st"; break;
+              case 2: suffix = "nd"; break;
+              case 3: suffix = "rd"; break;
+              default: suffix = "th"; break;
+            }
+          }
+          out += std::to_string(day) + suffix;
+          break;
+        }
+        case 'e': out += std::to_string(day); break;
+        case 'H':
+        case 'h':
+        case 'i':
+        case 's': out += "00"; break;  // date 无时分秒，简化为 00
+        default: out += fmt[i + 1]; break;
+      }
+      i++;
+    } else {
+      out += fmt[i];
+    }
+  }
+  result.set_string(out.c_str());
+  return RC::SUCCESS;
+}
+
+RC FunctionExpr::get_value(const Tuple &tuple, Value &value) const
+{
+  if (func_type_ == Type::LENGTH) {
+    if (children_.size() != 1) {
+      return RC::INVALID_ARGUMENT;
+    }
+    Value arg;
+    RC rc = children_[0]->get_value(tuple, arg);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    return eval_length(arg, value);
+  } else if (func_type_ == Type::ROUND) {
+    if (children_.size() == 1) {
+      Value arg;
+      RC rc = children_[0]->get_value(tuple, arg);
+      if (rc != RC::SUCCESS) return rc;
+      return eval_round(arg, value);
+    } else if (children_.size() == 2) {
+      Value arg, prec;
+      RC rc = children_[0]->get_value(tuple, arg);
+      if (rc != RC::SUCCESS) return rc;
+      rc = children_[1]->get_value(tuple, prec);
+      if (rc != RC::SUCCESS) return rc;
+      return eval_round(arg, prec, value);
+    } else {
+      return RC::INVALID_ARGUMENT;
+    }
+  } else if (func_type_ == Type::DATE_FORMAT) {
+    if (children_.size() != 2) {
+      return RC::INVALID_ARGUMENT;
+    }
+    Value date_val, format_val;
+    RC rc = children_[0]->get_value(tuple, date_val);
+    if (rc != RC::SUCCESS) return rc;
+    rc = children_[1]->get_value(tuple, format_val);
+    if (rc != RC::SUCCESS) return rc;
+    return eval_date_format(date_val, format_val, value);
+  }
+  return RC::INVALID_ARGUMENT;
+}
+
+RC FunctionExpr::try_get_value(Value &value) const
+{
+  if (func_type_ == Type::LENGTH) {
+    if (children_.size() != 1) {
+      return RC::INVALID_ARGUMENT;
+    }
+    Value arg;
+    RC rc = children_[0]->try_get_value(arg);
+    if (rc != RC::SUCCESS) return rc;
+    return eval_length(arg, value);
+  } else if (func_type_ == Type::ROUND) {
+    if (children_.size() == 1) {
+      Value arg;
+      RC rc = children_[0]->try_get_value(arg);
+      if (rc != RC::SUCCESS) return rc;
+      return eval_round(arg, value);
+    } else if (children_.size() == 2) {
+      Value arg, prec;
+      RC rc = children_[0]->try_get_value(arg);
+      if (rc != RC::SUCCESS) return rc;
+      rc = children_[1]->try_get_value(prec);
+      if (rc != RC::SUCCESS) return rc;
+      return eval_round(arg, prec, value);
+    } else {
+      return RC::INVALID_ARGUMENT;
+    }
+  } else if (func_type_ == Type::DATE_FORMAT) {
+    if (children_.size() != 2) {
+      return RC::INVALID_ARGUMENT;
+    }
+    Value date_val, format_val;
+    RC rc = children_[0]->try_get_value(date_val);
+    if (rc != RC::SUCCESS) return rc;
+    rc = children_[1]->try_get_value(format_val);
+    if (rc != RC::SUCCESS) return rc;
+    return eval_date_format(date_val, format_val, value);
+  }
+  return RC::INVALID_ARGUMENT;
+}
+
+RC FunctionExpr::get_column(Chunk &chunk, Column &column)
+{
+  if (func_type_ == Type::LENGTH) {
+    Column arg_col;
+    RC rc = children_[0]->get_column(chunk, arg_col);
+    if (rc != RC::SUCCESS) return rc;
+    column.init(value_type(), value_length(), chunk.rows());
+    for (int i = 0; i < chunk.rows(); i++) {
+      Value arg_val = arg_col.get_value(i);
+      Value result;
+      rc = eval_length(arg_val, result);
+      if (rc != RC::SUCCESS) return rc;
+      rc = column.append_value(result);
+      if (rc != RC::SUCCESS) return rc;
+    }
+    return RC::SUCCESS;
+  } else if (func_type_ == Type::ROUND) {
+    if (children_.size() == 1) {
+      Column arg_col;
+      RC rc = children_[0]->get_column(chunk, arg_col);
+      if (rc != RC::SUCCESS) return rc;
+      column.init(value_type(), value_length(), chunk.rows());
+      for (int i = 0; i < chunk.rows(); i++) {
+        Value arg_val = arg_col.get_value(i);
+        Value result;
+        rc = eval_round(arg_val, result);
+        if (rc != RC::SUCCESS) return rc;
+        rc = column.append_value(result);
+        if (rc != RC::SUCCESS) return rc;
+      }
+      return RC::SUCCESS;
+    } else if (children_.size() == 2) {
+      Column arg_col, prec_col;
+      RC rc = children_[0]->get_column(chunk, arg_col);
+      if (rc != RC::SUCCESS) return rc;
+      rc = children_[1]->get_column(chunk, prec_col);
+      if (rc != RC::SUCCESS) return rc;
+      column.init(value_type(), value_length(), chunk.rows());
+      for (int i = 0; i < chunk.rows(); i++) {
+        Value arg_val = arg_col.get_value(i);
+        Value prec_val = prec_col.get_value(i);
+        Value result;
+        rc = eval_round(arg_val, prec_val, result);
+        if (rc != RC::SUCCESS) return rc;
+        rc = column.append_value(result);
+        if (rc != RC::SUCCESS) return rc;
+      }
+      return RC::SUCCESS;
+    } else {
+      return RC::INVALID_ARGUMENT;
+    }
+  } else if (func_type_ == Type::DATE_FORMAT) {
+    Column date_col, format_col;
+    RC rc = children_[0]->get_column(chunk, date_col);
+    if (rc != RC::SUCCESS) return rc;
+    rc = children_[1]->get_column(chunk, format_col);
+    if (rc != RC::SUCCESS) return rc;
+
+    column.init(value_type(), value_length(), chunk.rows());
+    for (int i = 0; i < chunk.rows(); i++) {
+      Value date_val = date_col.get_value(i);
+      Value format_val = format_col.get_value(i);
+      Value result;
+      rc = eval_date_format(date_val, format_val, result);
+      if (rc != RC::SUCCESS) return rc;
+      rc = column.append_value(result);
+      if (rc != RC::SUCCESS) return rc;
+    }
+    return RC::SUCCESS;
+  }
+  return RC::INVALID_ARGUMENT;
+}
+
+RC FunctionExpr::type_from_string(const char *type_str, Type &type)
+{
+  if (0 == strcasecmp(type_str, "length")) {
+    type = Type::LENGTH;
+  } else if (0 == strcasecmp(type_str, "round")) {
+    type = Type::ROUND;
+  } else if (0 == strcasecmp(type_str, "date_format")) {
+    type = Type::DATE_FORMAT;
+  } else {
+    return RC::INVALID_ARGUMENT;
+  }
+  return RC::SUCCESS;
 }

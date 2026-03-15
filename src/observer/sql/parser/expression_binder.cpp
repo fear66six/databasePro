@@ -31,14 +31,19 @@ Table *BinderContext::find_table(const char *table_name) const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-static void wildcard_fields(Table *table, vector<unique_ptr<Expression>> &expressions)
+static void wildcard_fields(Table *table, vector<unique_ptr<Expression>> &expressions, bool use_table_prefix)
 {
   const TableMeta &table_meta = table->table_meta();
   const int        field_num  = table_meta.field_num();
   for (int i = table_meta.sys_field_num(); i < field_num; i++) {
     Field      field(table, table_meta.field(i));
     FieldExpr *field_expr = new FieldExpr(field);
-    field_expr->set_name(field.field_name());
+    if (use_table_prefix) {
+      std::string qualified = std::string(field.table_name()) + "." + field.field_name();
+      field_expr->set_name(qualified);
+    } else {
+      field_expr->set_name(field.field_name());
+    }
     expressions.emplace_back(field_expr);
   }
 }
@@ -60,7 +65,7 @@ RC ExpressionBinder::bind_expression(unique_ptr<Expression> &expr, vector<unique
 
     case ExprType::UNBOUND_AGGREGATION: {
       return bind_aggregate_expression(expr, bound_expressions);
-    } break;
+    }
 
     case ExprType::FIELD: {
       return bind_field_expression(expr, bound_expressions);
@@ -84,6 +89,10 @@ RC ExpressionBinder::bind_expression(unique_ptr<Expression> &expr, vector<unique
 
     case ExprType::ARITHMETIC: {
       return bind_arithmetic_expression(expr, bound_expressions);
+    } break;
+
+    case ExprType::FUNCTION: {
+      return bind_function_expression(expr, bound_expressions);
     } break;
 
     case ExprType::AGGREGATION: {
@@ -132,8 +141,9 @@ RC ExpressionBinder::bind_star_expression(
     tables_to_wildcard.insert(tables_to_wildcard.end(), all_tables.begin(), all_tables.end());
   }
 
+  bool use_table_prefix = (tables_to_wildcard.size() > 1) || (context_.query_tables().size() > 1);
   for (Table *table : tables_to_wildcard) {
-    wildcard_fields(table, bound_expressions);
+    wildcard_fields(table, bound_expressions, use_table_prefix);
   }
 
   return RC::SUCCESS;
@@ -168,7 +178,8 @@ RC ExpressionBinder::bind_unbound_field_expression(
   }
 
   if (0 == strcmp(field_name, "*")) {
-    wildcard_fields(table, bound_expressions);
+    bool use_table_prefix = (context_.query_tables().size() > 1);
+    wildcard_fields(table, bound_expressions, use_table_prefix);
   } else {
     const FieldMeta *field_meta = table->table_meta().field(field_name);
     if (nullptr == field_meta) {
@@ -178,7 +189,12 @@ RC ExpressionBinder::bind_unbound_field_expression(
 
     Field      field(table, field_meta);
     FieldExpr *field_expr = new FieldExpr(field);
-    field_expr->set_name(field_name);
+    if (!is_blank(table_name) && context_.query_tables().size() > 1) {
+      std::string qualified = std::string(table_name) + "." + field_name;
+      field_expr->set_name(qualified);
+    } else {
+      field_expr->set_name(field_name);
+    }
     bound_expressions.emplace_back(field_expr);
   }
 
@@ -492,3 +508,29 @@ RC ExpressionBinder::bind_aggregate_expression(
   bound_expressions.emplace_back(std::move(aggregate_expr));
   return RC::SUCCESS;
 }
+
+RC ExpressionBinder::bind_function_expression(
+    unique_ptr<Expression> &expr, vector<unique_ptr<Expression>> &bound_expressions)
+{
+  if (nullptr == expr) {
+    return RC::SUCCESS;
+  }
+
+  auto func_expr = static_cast<FunctionExpr *>(expr.get());
+  for (size_t i = 0; i < func_expr->child_count(); i++) {
+    vector<unique_ptr<Expression>> child_bound;
+    RC rc = bind_expression(func_expr->child(i), child_bound);
+    if (OB_FAIL(rc)) {
+      return rc;
+    }
+    if (child_bound.size() != 1) {
+      LOG_WARN("invalid children number of function expression: %zu", child_bound.size());
+      return RC::INVALID_ARGUMENT;
+    }
+    func_expr->child(i) = std::move(child_bound[0]);
+  }
+
+  bound_expressions.push_back(std::move(expr));
+  return RC::SUCCESS;
+}
+

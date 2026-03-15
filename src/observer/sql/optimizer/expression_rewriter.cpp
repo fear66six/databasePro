@@ -153,6 +153,20 @@ RC ExpressionRewriter::rewrite_expression(unique_ptr<Expression> &expr, bool &ch
       }
     } break;
 
+    case ExprType::FUNCTION: {
+      auto func_expr = static_cast<FunctionExpr *>(expr.get());
+      for (size_t i = 0; i < func_expr->child_count(); i++) {
+        bool sub_change_made = false;
+        rc                  = rewrite_expression(func_expr->child(i), sub_change_made);
+        if (rc != RC::SUCCESS) {
+          return rc;
+        }
+        if (sub_change_made && !change_made) {
+          change_made = true;
+        }
+      }
+    } break;
+
     default: {
       // do nothing
     } break;

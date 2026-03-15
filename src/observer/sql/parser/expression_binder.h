@@ -61,6 +61,8 @@ private:
       unique_ptr<Expression> &value_list_expr, vector<unique_ptr<Expression>> &bound_expressions);
   RC bind_aggregate_expression(
       unique_ptr<Expression> &aggregate_expr, vector<unique_ptr<Expression>> &bound_expressions);
+  RC bind_function_expression(
+      unique_ptr<Expression> &function_expr, vector<unique_ptr<Expression>> &bound_expressions);
 
 private:
   BinderContext &context_;
