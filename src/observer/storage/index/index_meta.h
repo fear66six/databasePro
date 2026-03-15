@@ -39,9 +39,12 @@ public:
 
   RC init(const char *name, const FieldMeta &field);
   RC init(const char *name, const vector<const FieldMeta *> &fields);
+  RC init(const char *name, bool unique, const FieldMeta &field);
+  RC init(const char *name, bool unique, const vector<const FieldMeta *> &fields);
 
 public:
   const char *name() const;
+  bool        unique() const { return unique_; }
   const char *field() const;   ///< 返回第一个字段名，兼容单字段接口
   int         field_count() const { return static_cast<int>(fields_.size()); }
   const char *field(int i) const;
@@ -55,4 +58,5 @@ public:
 protected:
   string         name_;    // index's name
   vector<string> fields_;  // field names (support multi-field)
+  bool           unique_ = false;  // unique index or not
 };

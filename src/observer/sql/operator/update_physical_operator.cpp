@@ -10,13 +10,15 @@ See the Mulan PSL v2 for more details. */
 
 #include "sql/operator/update_physical_operator.h"
 
+#include <unordered_map>
+
 #include "common/log/log.h"
 #include "storage/table/table.h"
 #include "storage/trx/trx.h"
 #include "sql/expr/tuple.h"
 
-UpdatePhysicalOperator::UpdatePhysicalOperator(Table *table, const FieldMeta *field_meta, const Value &value)
-    : table_(table), field_meta_(field_meta), value_(value), trx_(nullptr)
+UpdatePhysicalOperator::UpdatePhysicalOperator(Table *table, const vector<const FieldMeta *> &field_metas, const vector<Value> &values)
+    : table_(table), field_metas_(field_metas), values_(values), trx_(nullptr)
 {}
 
 RC UpdatePhysicalOperator::open(Trx *trx)
@@ -64,26 +66,50 @@ RC UpdatePhysicalOperator::open(Trx *trx)
     return rc;
   }
 
+  vector<Record> updated_new;  // 已成功更新的新记录，用于失败时回滚
   for (Record &old_record : old_records) {
     Record new_record;
     rc = build_new_record(old_record, new_record);
     if (OB_FAIL(rc)) {
       LOG_WARN("failed to build new record. rc=%s", strrc(rc));
-      return rc;
+      goto rollback;
     }
     rc = trx_->delete_record(table_, old_record);
     if (OB_FAIL(rc)) {
       LOG_WARN("failed to delete old record. rc=%s", strrc(rc));
-      return rc;
+      goto rollback;
     }
     rc = trx_->insert_record(table_, new_record);
     if (OB_FAIL(rc)) {
       LOG_WARN("failed to insert new record. rc=%s", strrc(rc));
-      return rc;
+      goto rollback;
     }
+    updated_new.emplace_back();
+    updated_new.back().copy_data(new_record.data(), new_record.len());
+    updated_new.back().set_rid(new_record.rid());
   }
 
   return RC::SUCCESS;
+
+rollback:
+  for (size_t i = 0; i < updated_new.size(); i++) {
+    RC rc2 = trx_->delete_record(table_, updated_new[i]);
+    if (OB_FAIL(rc2)) {
+      LOG_ERROR("rollback: failed to delete new record. rc=%s", strrc(rc2));
+    }
+    rc2 = trx_->insert_record(table_, old_records[i]);
+    if (OB_FAIL(rc2)) {
+      LOG_ERROR("rollback: failed to re-insert old record. rc=%s", strrc(rc2));
+    }
+  }
+  // 已 delete 但尚未 insert 成功的记录，需要重新 insert 回去
+  for (size_t i = updated_new.size(); i < old_records.size(); i++) {
+    RC rc2 = trx_->insert_record(table_, old_records[i]);
+    if (OB_FAIL(rc2)) {
+      LOG_ERROR("rollback: failed to re-insert old record (deleted but not inserted). rc=%s", strrc(rc2));
+    }
+  }
+  return rc;
 }
 
 RC UpdatePhysicalOperator::next()
@@ -113,13 +139,18 @@ RC UpdatePhysicalOperator::tuple_schema(TupleSchema &schema) const
 
 RC UpdatePhysicalOperator::build_new_record(const Record &old_record, Record &new_record) const
 {
-  if (table_ == nullptr || field_meta_ == nullptr) {
+  if (table_ == nullptr || field_metas_.empty()) {
     return RC::INTERNAL;
   }
 
   const TableMeta &table_meta = table_->table_meta();
   const int        sys_fields = table_meta.sys_field_num();
   const int        user_fields = table_meta.field_num() - sys_fields;
+
+  unordered_map<string, const Value *> update_map;
+  for (size_t i = 0; i < field_metas_.size() && i < values_.size(); i++) {
+    update_map[field_metas_[i]->name()] = &values_[i];
+  }
 
   RowTuple tuple;
   tuple.set_schema(table_, table_meta.field_metas());
@@ -133,8 +164,9 @@ RC UpdatePhysicalOperator::build_new_record(const Record &old_record, Record &ne
     if (field == nullptr) {
       return RC::INTERNAL;
     }
-    if (strcmp(field->name(), field_meta_->name()) == 0) {
-      values.emplace_back(value_);
+    auto it = update_map.find(field->name());
+    if (it != update_map.end()) {
+      values.emplace_back(*it->second);
     } else {
       Value cell;
       RC rc = tuple.cell_at(i + sys_fields, cell);

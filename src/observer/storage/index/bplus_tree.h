@@ -116,9 +116,13 @@ private:
 class KeyComparator
 {
 public:
-  void init(AttrType type, int length) { attr_comparator_.init(type, length); }
+  void init(AttrType type, int length) { attr_comparator_.init(type, length); unique_ = false; }
 
-  void init(span<const std::pair<AttrType, int>> fields) { attr_comparator_.init(fields); }
+  void init(span<const std::pair<AttrType, int>> fields) { attr_comparator_.init(fields); unique_ = false; }
+
+  void init(AttrType type, int length, bool unique) { attr_comparator_.init(type, length); unique_ = unique; }
+
+  void init(span<const std::pair<AttrType, int>> fields, bool unique) { attr_comparator_.init(fields); unique_ = unique; }
 
   const AttrComparator &attr_comparator() const { return attr_comparator_; }
 
@@ -128,7 +132,9 @@ public:
     if (result != 0) {
       return result;
     }
-
+    if (unique_) {
+      return 0;  // 唯一索引：属性值相同即认为键相同，不比较 RID
+    }
     const RID *rid1 = (const RID *)(v1 + attr_comparator_.attr_length());
     const RID *rid2 = (const RID *)(v2 + attr_comparator_.attr_length());
     return RID::compare(rid1, rid2);
@@ -136,6 +142,7 @@ public:
 
 private:
   AttrComparator attr_comparator_;
+  bool           unique_ = false;
 };
 
 /**
@@ -238,6 +245,7 @@ struct IndexFileHeader
   int32_t   field_count;        ///< 字段数，0或1=单字段，>1=多字段
   AttrType  field_types[INDEX_MAX_FIELDS];   ///< 多字段时各字段类型
   int32_t   field_lengths[INDEX_MAX_FIELDS]; ///< 多字段时各字段长度
+  int32_t   unique;             ///< 是否唯一索引，0=否，1=是（放在末尾以兼容旧文件）
 
   const string to_string() const
   {
@@ -520,12 +528,12 @@ public:
    * @param leaf_max_size 叶子节点最大大小
    */
   RC create(LogHandler &log_handler, BufferPoolManager &bpm, const char *file_name, AttrType attr_type, int attr_length,
-      int internal_max_size = -1, int leaf_max_size = -1);
+      int internal_max_size = -1, int leaf_max_size = -1, bool unique = false);
   RC create(LogHandler &log_handler, DiskBufferPool &buffer_pool, AttrType attr_type, int attr_length,
-      int internal_max_size = -1, int leaf_max_size = -1);
+      int internal_max_size = -1, int leaf_max_size = -1, bool unique = false);
   /// 多字段索引
   RC create(LogHandler &log_handler, DiskBufferPool &buffer_pool, span<const std::pair<AttrType, int>> fields,
-      int internal_max_size = -1, int leaf_max_size = -1);
+      int internal_max_size = -1, int leaf_max_size = -1, bool unique = false);
 
   /**
    * @brief 打开一个B+树

@@ -37,8 +37,8 @@ public:
   }
   RC get_record(const RID &rid, Record &record) override;
 
-  RC create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name) override;
-  RC create_index(Trx *trx, const vector<const FieldMeta *> &field_metas, const char *index_name) override;
+  RC create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name, bool unique = false) override;
+  RC create_index(Trx *trx, const vector<const FieldMeta *> &field_metas, const char *index_name, bool unique = false) override;
   RC get_record_scanner(RecordScanner *&scanner, Trx *trx, ReadWriteMode mode) override;
   RC get_chunk_scanner(ChunkFileScanner &scanner, Trx *trx, ReadWriteMode mode) override;
   RC visit_record(const RID &rid, function<bool(Record &)> visitor) override;
@@ -51,7 +51,7 @@ public:
   RC init() override;
 
 private:
-  RC insert_entry_of_indexes(const char *record, const RID &rid);
+  RC insert_entry_of_indexes(const char *record, const RID &rid, vector<Index *> &inserted_indexes);
   RC delete_entry_of_indexes(const char *record, const RID &rid, bool error_on_not_exists);
 
 private:

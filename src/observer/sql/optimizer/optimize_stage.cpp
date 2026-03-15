@@ -125,6 +125,11 @@ RC OptimizeStage::generate_physical_plan(
     LOG_TRACE("use chunk iterator");
     session->set_used_chunk_mode(true);
     rc = physical_plan_generator_.create_vec(*logical_operator, physical_operator, session);
+    if (rc != RC::SUCCESS) {
+      LOG_TRACE("create_vec failed (e.g. plan has JOIN), fallback to tuple iterator");
+      session->set_used_chunk_mode(false);
+      rc = physical_plan_generator_.create(*logical_operator, physical_operator, session);
+    }
   } else {
     LOG_TRACE("use tuple iterator");
     session->set_used_chunk_mode(false);

@@ -801,7 +801,8 @@ RC BplusTreeHandler::create(LogHandler &log_handler,
                             AttrType attr_type, 
                             int attr_length, 
                             int internal_max_size /* = -1*/,
-                            int leaf_max_size /* = -1 */)
+                            int leaf_max_size /* = -1 */,
+                            bool unique /* = false */)
 {
   RC rc = bpm.create_file(file_name);
   if (OB_FAIL(rc)) {
@@ -819,7 +820,7 @@ RC BplusTreeHandler::create(LogHandler &log_handler,
   }
   LOG_INFO("Successfully open index file %s.", file_name);
 
-  rc = this->create(log_handler, *bp, attr_type, attr_length, internal_max_size, leaf_max_size);
+  rc = this->create(log_handler, *bp, attr_type, attr_length, internal_max_size, leaf_max_size, unique);
   if (OB_FAIL(rc)) {
     bpm.close_file(file_name);
     return rc;
@@ -834,7 +835,8 @@ RC BplusTreeHandler::create(LogHandler &log_handler,
             AttrType attr_type,
             int attr_length,
             int internal_max_size /* = -1 */,
-            int leaf_max_size /* = -1 */)
+            int leaf_max_size /* = -1 */,
+            bool unique /* = false */)
 {
   if (internal_max_size < 0) {
     internal_max_size = calc_internal_page_capacity(attr_length);
@@ -875,6 +877,7 @@ RC BplusTreeHandler::create(LogHandler &log_handler,
   file_header->internal_max_size = internal_max_size;
   file_header->leaf_max_size      = leaf_max_size;
   file_header->root_page         = BP_INVALID_PAGE_NUM;
+  file_header->unique            = unique ? 1 : 0;
 
   // 取消记录日志的原因请参考下面的sync调用的地方。
   // mtr.logger().init_header_page(header_frame, *file_header);
@@ -891,7 +894,7 @@ RC BplusTreeHandler::create(LogHandler &log_handler,
     return RC::NOMEM;
   }
 
-  key_comparator_.init(file_header->attr_type, file_header->attr_length);
+  key_comparator_.init(file_header->attr_type, file_header->attr_length, unique);
   key_printer_.init(file_header->attr_type, file_header->attr_length);
 
   /*
@@ -913,7 +916,8 @@ RC BplusTreeHandler::create(LogHandler &log_handler,
     DiskBufferPool &buffer_pool,
     span<const std::pair<AttrType, int>> fields,
     int internal_max_size /* = -1 */,
-    int leaf_max_size /* = -1 */)
+    int leaf_max_size /* = -1 */,
+    bool unique /* = false */)
 {
   if (fields.empty()) {
     LOG_WARN("invalid empty fields for multi-field index");
@@ -964,6 +968,7 @@ RC BplusTreeHandler::create(LogHandler &log_handler,
   file_header->internal_max_size = internal_max_size;
   file_header->leaf_max_size      = leaf_max_size;
   file_header->root_page         = BP_INVALID_PAGE_NUM;
+  file_header->unique            = unique ? 1 : 0;
 
   header_frame->mark_dirty();
 
@@ -977,7 +982,7 @@ RC BplusTreeHandler::create(LogHandler &log_handler,
     return RC::NOMEM;
   }
 
-  key_comparator_.init(fields);
+  key_comparator_.init(fields, unique);
   key_printer_.init(fields);
 
   rc = this->sync();
@@ -1044,15 +1049,16 @@ RC BplusTreeHandler::open(LogHandler &log_handler, DiskBufferPool &buffer_pool)
   // close old page_handle
   buffer_pool.unpin_page(frame);
 
+  bool unique = (file_header_.unique != 0);
   if (file_header_.field_count > 1) {
     vector<std::pair<AttrType, int>> fields;
     for (int i = 0; i < file_header_.field_count && i < INDEX_MAX_FIELDS; i++) {
       fields.push_back({file_header_.field_types[i], file_header_.field_lengths[i]});
     }
-    key_comparator_.init(span<const std::pair<AttrType, int>>(fields.data(), fields.size()));
+    key_comparator_.init(span<const std::pair<AttrType, int>>(fields.data(), fields.size()), unique);
     key_printer_.init(span<const std::pair<AttrType, int>>(fields.data(), fields.size()));
   } else {
-    key_comparator_.init(file_header_.attr_type, file_header_.attr_length);
+    key_comparator_.init(file_header_.attr_type, file_header_.attr_length, unique);
     key_printer_.init(file_header_.attr_type, file_header_.attr_length);
   }
   LOG_INFO("Successfully open index");
@@ -1532,7 +1538,8 @@ RC BplusTreeHandler::recover_init_header_page(BplusTreeMiniTransaction &mtr, Fra
   header_dirty_ = false;
   frame->mark_dirty();
 
-  key_comparator_.init(file_header_.attr_type, file_header_.attr_length);
+  bool unique = (file_header_.unique != 0);
+  key_comparator_.init(file_header_.attr_type, file_header_.attr_length, unique);
   key_printer_.init(file_header_.attr_type, file_header_.attr_length);
 
   return RC::SUCCESS;

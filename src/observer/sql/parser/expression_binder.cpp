@@ -12,6 +12,7 @@ See the Mulan PSL v2 for more details. */
 // Created by Wangyunlai on 2024/05/29.
 //
 
+#include <string>
 #include "common/log/log.h"
 #include "common/lang/string.h"
 #include "common/lang/ranges.h"
@@ -20,8 +21,22 @@ See the Mulan PSL v2 for more details. */
 
 using namespace common;
 
+void BinderContext::add_table_alias(const char *alias, Table *table)
+{
+  if (alias != nullptr && strlen(alias) > 0) {
+    alias_map_[alias] = table;
+  }
+}
+
 Table *BinderContext::find_table(const char *table_name) const
 {
+  if (table_name != nullptr) {
+    for (const auto &p : alias_map_) {
+      if (0 == strcasecmp(table_name, p.first.c_str())) {
+        return p.second;
+      }
+    }
+  }
   auto pred = [table_name](Table *table) { return 0 == strcasecmp(table_name, table->name()); };
   auto iter = ranges::find_if(query_tables_, pred);
   if (iter == query_tables_.end()) {

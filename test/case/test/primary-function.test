@@ -6,6 +6,9 @@ INSERT INTO function_table VALUES (3, 'KGI', 8.25, '2020-10-02');
 INSERT INTO function_table VALUES (8, '4BB80KIKT', 8.58, '2024-06-14');
 INSERT INTO function_table VALUES (1, 'HELLO', 3.14, '2020-01-21');
 INSERT INTO function_table VALUES (2, 'WORLD', 2.718, '2019-12-31');
+INSERT INTO function_table_2 VALUES (1, 'A', 2.5, '2020-01-01');
+INSERT INTO function_table_2 VALUES (2, 'B', 4.5, '2020-02-01');
+INSERT INTO function_table_2 VALUES (3, 'C', 7.0, '2020-03-01');
 
 -- echo 1. length with constant (CALC)
 calc length('hello');
@@ -48,6 +51,9 @@ select date_format(u_date, '%Y-%m-%d') from function_table where id=1;
 -- echo 7. functions in WHERE
 -- sort select * from function_table where length(name) > 5;
 select id, name from function_table where length(name) = 5;
+
+-- echo 7b. ROUND in JOIN with table alias (select and where)
+-- sort select t1.id, t1.name, round(t1.score) as score1, t2.id, t2.name, round(t2.score) as score2 from function_table t1, function_table_2 t2 where t1.id > t2.id and round(t1.score) > round(t2.score);
 
 -- echo 8. wrong type returns FAILURE
 calc length(123);

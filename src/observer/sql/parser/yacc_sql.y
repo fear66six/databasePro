@@ -146,6 +146,7 @@ Expression *create_func_expr(FunctionExpr::Type func_type,
         LENGTH
         ROUND
         DATE_FORMAT
+        UNIQUE
 
 /** union 中定义各种数据类型，真实生成的代码也是union类型，所以不能有非POD类型的数据 **/
 %union {
@@ -169,8 +170,12 @@ Expression *create_func_expr(FunctionExpr::Type func_type,
   char *                                     cstring;
   int                                        number;
   float                                      floats;
+  vector<std::pair<string, Value>> *         update_list;
+  vector<vector<Value> *> *                   value_list_groups;
 }
 
+%destructor { if ($$) { for (auto *p : *$$) delete p; delete $$; } } <value_list_groups>
+%destructor { delete $$; } <update_list>
 %destructor { delete $$; } <condition>
 %destructor { delete $$; } <value>
 %destructor { delete $$; } <rel_attr>
@@ -209,6 +214,8 @@ Expression *create_func_expr(FunctionExpr::Type func_type,
 %type <cstring>             storage_format
 %type <key_list>            primary_key
 %type <key_list>            attr_list
+%type <update_list>        update_list
+%type <value_list_groups>  value_list_groups
 %type <inner_join_node>     from_node
 %type <inner_join_list>     from_list
 %type <inner_join_node>     join_list
@@ -345,16 +352,29 @@ desc_table_stmt:
     }
     ;
 
-create_index_stmt:    /*create index 语句的语法解析树，支持单字段和多字段*/
+create_index_stmt:    /*create index 语句的语法解析树，支持单字段和多字段，支持 unique */
     CREATE INDEX ID ON ID LBRACE attr_list RBRACE
     {
       $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
       CreateIndexSqlNode &create_index = $$->create_index;
       create_index.index_name = $3;
       create_index.relation_name = $5;
+      create_index.unique = false;
       if ($7 != nullptr) {
         create_index.attribute_names.swap(*$7);
         delete $7;
+      }
+    }
+    | CREATE UNIQUE INDEX ID ON ID LBRACE attr_list RBRACE
+    {
+      $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
+      CreateIndexSqlNode &create_index = $$->create_index;
+      create_index.index_name = $4;
+      create_index.relation_name = $6;
+      create_index.unique = true;
+      if ($8 != nullptr) {
+        create_index.attribute_names.swap(*$8);
+        delete $8;
       }
     }
     ;
@@ -464,6 +484,31 @@ insert_stmt:        /*insert   语句的语法解析树*/
       $$->insertion.values.swap(*$6);
       delete $6;
     }
+    | INSERT INTO ID VALUES value_list_groups
+    {
+      $$ = new ParsedSqlNode(SCF_INSERT);
+      $$->insertion.relation_name = $3;
+      if ($5 != nullptr) {
+        for (auto *row : *$5) {
+          $$->insertion.value_rows.push_back(std::move(*row));
+          delete row;
+        }
+        delete $5;
+      }
+    }
+    ;
+
+value_list_groups:
+    LBRACE value_list RBRACE
+    {
+      $$ = new vector<vector<Value> *>();
+      $$->push_back($2);
+    }
+    | value_list_groups COMMA LBRACE value_list RBRACE
+    {
+      $$ = $1;
+      $$->push_back($4);
+    }
     ;
 
 value_list:
@@ -517,17 +562,33 @@ delete_stmt:    /*  delete 语句的语法解析树*/
     }
     ;
 update_stmt:      /*  update 语句的语法解析树*/
-    UPDATE ID SET ID EQ value where 
+    UPDATE ID SET update_list where 
     {
       $$ = new ParsedSqlNode(SCF_UPDATE);
       $$->update.relation_name = $2;
-      $$->update.attribute_name = $4;
-      $$->update.value = *$6;
-      delete $6;
-      if ($7 != nullptr) {
-        $$->update.conditions.swap(*$7);
-        delete $7;
+      if ($4 != nullptr && !$4->empty()) {
+        $$->update.updates.swap(*$4);
+        delete $4;
       }
+      if ($5 != nullptr) {
+        $$->update.conditions.swap(*$5);
+        delete $5;
+      }
+    }
+    ;
+
+update_list:
+    ID EQ value
+    {
+      $$ = new vector<std::pair<string, Value>>();
+      $$->emplace_back($1, std::move(*$3));
+      delete $3;
+    }
+    | update_list COMMA ID EQ value
+    {
+      $$ = $1;
+      $$->emplace_back($3, std::move(*$5));
+      delete $5;
     }
     ;
 select_stmt:        /*  select 语句的语法解析树*/
@@ -778,7 +839,23 @@ from_list:
     ;
 
 from_node:
-    ID join_list {
+    ID ID join_list {
+      if (nullptr != $3) {
+        $$ = $3;
+      } else {
+        $$ = new InnerJoinSqlNode;
+      }
+      $$->base_relation.first = $1;
+      $$->base_relation.second = $2;
+      std::reverse($$->join_relations.begin(), $$->join_relations.end());
+      std::reverse($$->conditions.begin(), $$->conditions.end());
+    }
+    | ID ID {
+      $$ = new InnerJoinSqlNode;
+      $$->base_relation.first = $1;
+      $$->base_relation.second = $2;
+    }
+    | ID join_list {
       if (nullptr != $2) {
         $$ = $2;
       } else {
@@ -795,6 +872,15 @@ join_list:
     /* empty */
     {
       $$ = nullptr;
+    }
+    | INNER JOIN ID ID ON on_condition join_list {
+      if (nullptr != $7) {
+        $$ = $7;
+      } else {
+        $$ = new InnerJoinSqlNode;
+      }
+      $$->join_relations.emplace_back($3, $4);
+      $$->conditions.push_back($6);
     }
     | INNER JOIN ID ON on_condition join_list {
       if (nullptr != $6) {

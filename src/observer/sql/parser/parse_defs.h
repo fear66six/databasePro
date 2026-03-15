@@ -138,8 +138,9 @@ struct CalcSqlNode
  */
 struct InsertSqlNode
 {
-  string        relation_name;  ///< Relation to insert into
-  vector<Value> values;         ///< 要插入的值
+  string                 relation_name;  ///< Relation to insert into
+  vector<Value>          values;         ///< 单行插入的值
+  vector<vector<Value>>  value_rows;     ///< 批量插入：多行，非空时优先使用
 };
 
 /**
@@ -159,8 +160,9 @@ struct DeleteSqlNode
 struct UpdateSqlNode
 {
   string                   relation_name;   ///< Relation to update
-  string                   attribute_name;  ///< 更新的字段，仅支持一个字段
-  Value                    value;           ///< 更新的值，仅支持一个字段
+  string                   attribute_name;  ///< 更新的字段（兼容单字段）
+  Value                    value;           ///< 更新的值（兼容单字段）
+  vector<pair<string, Value>> updates;      ///< 多列更新：(字段名, 值) 列表，非空时优先使用
   vector<ConditionSqlNode> conditions;
 };
 
@@ -220,6 +222,7 @@ struct CreateIndexSqlNode
   string              index_name;      ///< Index name
   string              relation_name;   ///< Relation name
   vector<string>      attribute_names;  ///< Attribute names (support multi-field index)
+  bool                unique = false;  ///< Unique index or not
 };
 
 /**

@@ -46,14 +46,17 @@ RC HeapTableEngine::insert_record(Record &record)
     return rc;
   }
 
-  rc = insert_entry_of_indexes(record.data(), record.rid());
+  vector<Index *> inserted_indexes;  // 成功插入的索引，用于回滚时仅删除这些
+  rc = insert_entry_of_indexes(record.data(), record.rid(), inserted_indexes);
   if (rc != RC::SUCCESS) {  // 可能出现了键值重复
-    RC rc2 = delete_entry_of_indexes(record.data(), record.rid(), false /*error_on_not_exists*/);
-    if (rc2 != RC::SUCCESS) {
-      LOG_ERROR("Failed to rollback index data when insert index entries failed. table name=%s, rc=%d:%s",
-                table_meta_->name(), rc2, strrc(rc2));
+    for (Index *index : inserted_indexes) {
+      RC rc2 = index->delete_entry(record.data(), &record.rid());
+      if (rc2 != RC::SUCCESS && rc2 != RC::RECORD_NOT_EXIST) {
+        LOG_ERROR("Failed to rollback index data when insert index entries failed. table name=%s, index=%s, rc=%d:%s",
+                  table_meta_->name(), index->index_meta().name(), rc2, strrc(rc2));
+      }
     }
-    rc2 = record_handler_->delete_record(&record.rid());
+    RC rc2 = record_handler_->delete_record(&record.rid());
     if (rc2 != RC::SUCCESS) {
       LOG_PANIC("Failed to rollback record data when insert index entries failed. table name=%s, rc=%d:%s",
                 table_meta_->name(), rc2, strrc(rc2));
@@ -96,9 +99,16 @@ RC HeapTableEngine::delete_record(const Record &record)
   RC rc = RC::SUCCESS;
   for (Index *index : indexes_) {
     rc = index->delete_entry(record.data(), &record.rid());
-    ASSERT(RC::SUCCESS == rc, 
-           "failed to delete entry from index. table name=%s, index name=%s, rid=%s, rc=%s",
-           table_meta_->name(), index->index_meta().name(), record.rid().to_string().c_str(), strrc(rc));
+    if (rc != RC::SUCCESS) {
+      if (rc == RC::RECORD_NOT_EXIST) {
+        LOG_WARN("index entry not found when deleting, may be inconsistent. table=%s, index=%s, rid=%s",
+            table_meta_->name(), index->index_meta().name(), record.rid().to_string().c_str());
+      } else {
+        LOG_ERROR("failed to delete entry from index. table name=%s, index name=%s, rid=%s, rc=%s",
+            table_meta_->name(), index->index_meta().name(), record.rid().to_string().c_str(), strrc(rc));
+        return rc;
+      }
+    }
   }
   rc = record_handler_->delete_record(&record.rid());
   return rc;
@@ -123,7 +133,7 @@ RC HeapTableEngine::get_chunk_scanner(ChunkFileScanner &scanner, Trx *trx, ReadW
   return rc;
 }
 
-RC HeapTableEngine::create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name)
+RC HeapTableEngine::create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name, bool unique)
 {
   if (common::is_blank(index_name) || nullptr == field_meta) {
     LOG_INFO("Invalid input arguments, table name is %s, index_name is blank or attribute_name is blank", table_meta_->name());
@@ -132,7 +142,7 @@ RC HeapTableEngine::create_index(Trx *trx, const FieldMeta *field_meta, const ch
 
   IndexMeta new_index_meta;
 
-  RC rc = new_index_meta.init(index_name, *field_meta);
+  RC rc = new_index_meta.init(index_name, unique, *field_meta);
   if (rc != RC::SUCCESS) {
     LOG_INFO("Failed to init IndexMeta in table:%s, index_name:%s, field_name:%s", 
              table_meta_->name(), index_name, field_meta->name());
@@ -222,7 +232,7 @@ RC HeapTableEngine::create_index(Trx *trx, const FieldMeta *field_meta, const ch
   return rc;
 }
 
-RC HeapTableEngine::create_index(Trx *trx, const vector<const FieldMeta *> &field_metas, const char *index_name)
+RC HeapTableEngine::create_index(Trx *trx, const vector<const FieldMeta *> &field_metas, const char *index_name, bool unique)
 {
   if (common::is_blank(index_name) || field_metas.empty()) {
     LOG_INFO("Invalid input arguments, table name is %s, index_name is blank or no fields", table_meta_->name());
@@ -231,7 +241,7 @@ RC HeapTableEngine::create_index(Trx *trx, const vector<const FieldMeta *> &fiel
 
   IndexMeta new_index_meta;
 
-  RC rc = new_index_meta.init(index_name, field_metas);
+  RC rc = new_index_meta.init(index_name, unique, field_metas);
   if (rc != RC::SUCCESS) {
     LOG_INFO("Failed to init IndexMeta in table:%s, index_name:%s", table_meta_->name(), index_name);
     return rc;
@@ -319,14 +329,16 @@ RC HeapTableEngine::create_index(Trx *trx, const vector<const FieldMeta *> &fiel
   return rc;
 }
 
-RC HeapTableEngine::insert_entry_of_indexes(const char *record, const RID &rid)
+RC HeapTableEngine::insert_entry_of_indexes(const char *record, const RID &rid, vector<Index *> &inserted_indexes)
 {
   RC rc = RC::SUCCESS;
+  inserted_indexes.clear();
   for (Index *index : indexes_) {
     rc = index->insert_entry(record, &rid);
     if (rc != RC::SUCCESS) {
       break;
     }
+    inserted_indexes.push_back(index);
   }
   return rc;
 }

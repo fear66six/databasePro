@@ -22,8 +22,19 @@ See the Mulan PSL v2 for more details. */
 const static Json::StaticString FIELD_NAME("name");
 const static Json::StaticString FIELD_FIELD_NAME("field_name");
 const static Json::StaticString FIELD_FIELD_NAMES("field_names");
+const static Json::StaticString FIELD_UNIQUE("unique");
 
 RC IndexMeta::init(const char *name, const FieldMeta &field)
+{
+  return init(name, false, field);
+}
+
+RC IndexMeta::init(const char *name, const vector<const FieldMeta *> &fields)
+{
+  return init(name, false, fields);
+}
+
+RC IndexMeta::init(const char *name, bool unique, const FieldMeta &field)
 {
   if (common::is_blank(name)) {
     LOG_ERROR("Failed to init index, name is empty.");
@@ -32,10 +43,11 @@ RC IndexMeta::init(const char *name, const FieldMeta &field)
 
   name_   = name;
   fields_ = {field.name()};
+  unique_ = unique;
   return RC::SUCCESS;
 }
 
-RC IndexMeta::init(const char *name, const vector<const FieldMeta *> &fields)
+RC IndexMeta::init(const char *name, bool unique, const vector<const FieldMeta *> &fields)
 {
   if (common::is_blank(name)) {
     LOG_ERROR("Failed to init index, name is empty.");
@@ -48,7 +60,8 @@ RC IndexMeta::init(const char *name, const vector<const FieldMeta *> &fields)
 
   name_.clear();
   fields_.clear();
-  name_ = name;
+  name_   = name;
+  unique_ = unique;
   for (const FieldMeta *f : fields) {
     fields_.push_back(f->name());
   }
@@ -57,7 +70,8 @@ RC IndexMeta::init(const char *name, const vector<const FieldMeta *> &fields)
 
 void IndexMeta::to_json(Json::Value &json_value) const
 {
-  json_value[FIELD_NAME] = name_;
+  json_value[FIELD_NAME]   = name_;
+  json_value[FIELD_UNIQUE] = unique_;
   if (fields_.size() == 1) {
     json_value[FIELD_FIELD_NAME] = fields_[0];  // 兼容旧格式
   }
@@ -74,6 +88,12 @@ RC IndexMeta::from_json(const TableMeta &table, const Json::Value &json_value, I
   if (!name_value.isString()) {
     LOG_ERROR("Index name is not a string. json value=%s", name_value.toStyledString().c_str());
     return RC::INTERNAL;
+  }
+
+  bool unique = false;
+  const Json::Value &unique_value = json_value[FIELD_UNIQUE];
+  if (unique_value.isBool()) {
+    unique = unique_value.asBool();
   }
 
   // 新格式：field_names 数组
@@ -93,7 +113,7 @@ RC IndexMeta::from_json(const TableMeta &table, const Json::Value &json_value, I
       }
       fields.push_back(field);
     }
-    return index.init(name_value.asCString(), fields);
+    return index.init(name_value.asCString(), unique, fields);
   }
 
   // 兼容旧格式：field_name 单字段
@@ -110,7 +130,7 @@ RC IndexMeta::from_json(const TableMeta &table, const Json::Value &json_value, I
     return RC::SCHEMA_FIELD_MISSING;
   }
 
-  return index.init(name_value.asCString(), *field);
+  return index.init(name_value.asCString(), unique, *field);
 }
 
 const char *IndexMeta::name() const { return name_.c_str(); }

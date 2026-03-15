@@ -16,6 +16,7 @@ See the Mulan PSL v2 for more details. */
 
 #include "sql/operator/physical_operator.h"
 #include "sql/parser/parse.h"
+#include "common/lang/vector.h"
 
 class InsertStmt;
 
@@ -27,6 +28,7 @@ class InsertPhysicalOperator : public PhysicalOperator
 {
 public:
   InsertPhysicalOperator(Table *table, vector<Value> &&values);
+  InsertPhysicalOperator(Table *table, vector<vector<Value>> &&value_rows);
 
   virtual ~InsertPhysicalOperator() = default;
 
@@ -41,6 +43,7 @@ public:
   Tuple *current_tuple() override { return nullptr; }
 
 private:
-  Table        *table_ = nullptr;
-  vector<Value> values_;
+  Table                 *table_ = nullptr;
+  vector<Value>          values_;
+  vector<vector<Value>>  value_rows_;  ///< 批量插入
 };

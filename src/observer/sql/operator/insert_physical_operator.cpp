@@ -14,6 +14,7 @@ See the Mulan PSL v2 for more details. */
 
 #include "sql/operator/insert_physical_operator.h"
 #include "sql/stmt/insert_stmt.h"
+#include "storage/record/record.h"
 #include "storage/table/table.h"
 #include "storage/trx/trx.h"
 
@@ -23,9 +24,39 @@ InsertPhysicalOperator::InsertPhysicalOperator(Table *table, vector<Value> &&val
     : table_(table), values_(std::move(values))
 {}
 
+InsertPhysicalOperator::InsertPhysicalOperator(Table *table, vector<vector<Value>> &&value_rows)
+    : table_(table), value_rows_(std::move(value_rows))
+{}
+
 RC InsertPhysicalOperator::open(Trx *trx)
 {
   table_->add_ref();
+
+  if (!value_rows_.empty()) {
+    vector<Record> inserted;
+    RC rc = RC::SUCCESS;
+    for (const auto &row : value_rows_) {
+      Record record;
+      rc = table_->make_record(static_cast<int>(row.size()), row.data(), record);
+      if (rc != RC::SUCCESS) {
+        LOG_WARN("failed to make record. rc=%s", strrc(rc));
+        return rc;
+      }
+      rc = trx->insert_record(table_, record);
+      if (rc != RC::SUCCESS) {
+        LOG_WARN("failed to insert record by transaction. rc=%s", strrc(rc));
+        for (Record &r : inserted) {
+          trx->delete_record(table_, r);
+        }
+        return rc;
+      }
+      inserted.emplace_back();
+      inserted.back().copy_data(record.data(), record.len());
+      inserted.back().set_rid(record.rid());
+    }
+    return RC::SUCCESS;
+  }
+
   Record record;
   RC     rc = table_->make_record(static_cast<int>(values_.size()), values_.data(), record);
   if (rc != RC::SUCCESS) {

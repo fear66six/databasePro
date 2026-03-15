@@ -12,6 +12,7 @@ See the Mulan PSL v2 for more details. */
 
 #include "sql/operator/physical_operator.h"
 #include "sql/expr/tuple.h"
+#include "common/lang/vector.h"
 
 class Trx;
 class FieldMeta;
@@ -23,7 +24,7 @@ class FieldMeta;
 class UpdatePhysicalOperator : public PhysicalOperator
 {
 public:
-  UpdatePhysicalOperator(Table *table, const FieldMeta *field_meta, const Value &value);
+  UpdatePhysicalOperator(Table *table, const vector<const FieldMeta *> &field_metas, const vector<Value> &values);
   virtual ~UpdatePhysicalOperator() = default;
 
   PhysicalOperatorType type() const override { return PhysicalOperatorType::UPDATE; }
@@ -43,8 +44,8 @@ private:
   RC build_new_record(const Record &old_record, Record &new_record) const;
 
 private:
-  Table           *table_      = nullptr;
-  const FieldMeta  *field_meta_ = nullptr;
-  Value            value_;
-  Trx             *trx_        = nullptr;
+  Table                    *table_       = nullptr;
+  vector<const FieldMeta *> field_metas_;
+  vector<Value>             values_;
+  Trx                      *trx_         = nullptr;
 };

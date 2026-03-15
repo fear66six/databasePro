@@ -15,30 +15,30 @@ See the Mulan PSL v2 for more details. */
 #pragma once
 
 #include "sql/operator/logical_operator.h"
+#include "common/lang/vector.h"
 
 class FieldMeta;
 
 /**
  * @brief 逻辑算子：更新（与 Insert/Delete 类似，持有表与更新目标；子节点为 TableGet 或 Predicate 提供待更新行）
  * @ingroup LogicalOperator
- * @details 当前仅支持单字段更新；value 在 Stmt 中已做类型转换。
  */
 class UpdateLogicalOperator : public LogicalOperator
 {
 public:
-  UpdateLogicalOperator(Table *table, const FieldMeta *field_meta, const Value &value);
+  UpdateLogicalOperator(Table *table, const vector<const FieldMeta *> &field_metas, const vector<Value> &values);
   virtual ~UpdateLogicalOperator() = default;
 
   LogicalOperatorType type() const override { return LogicalOperatorType::UPDATE; }
   OpType              get_op_type() const override { return OpType::LOGICALUPDATE; }
 
-  Table          *table() const { return table_; }
-  const FieldMeta *field_meta() const { return field_meta_; }
-  const Value     &value() const { return value_; }
+  Table                          *table() const { return table_; }
+  const vector<const FieldMeta *> &field_metas() const { return field_metas_; }
+  const vector<Value>             &values() const { return values_; }
 
 private:
-  Table          *table_      = nullptr;
-  const FieldMeta *field_meta_ = nullptr;
-  Value           value_;
+  Table                    *table_       = nullptr;
+  vector<const FieldMeta *> field_metas_;
+  vector<Value>             values_;
 };
 

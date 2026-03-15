@@ -82,13 +82,23 @@ static RC process_from_clause(Db *db, vector<Table *> &tables, unordered_map<str
     if (rc != RC::SUCCESS) {
       return rc;
     }
-    jt.push_join_table(table_map[relations.base_relation.first], nullptr);
+    Table *base_table = table_map[relations.base_relation.first];
+    jt.push_join_table(base_table, nullptr);
+    if (!relations.base_relation.second.empty()) {
+      table_map[relations.base_relation.second] = base_table;
+      binder_context.add_table_alias(relations.base_relation.second.c_str(), base_table);
+    }
 
     for (size_t j = 0; j < relations.join_relations.size(); j++) {
       const string &join_table_name = relations.join_relations[j].first;
       rc                            = check_and_collect_table(join_table_name);
       if (rc != RC::SUCCESS) {
         return rc;
+      }
+      Table *join_table = table_map[join_table_name];
+      if (!relations.join_relations[j].second.empty()) {
+        table_map[relations.join_relations[j].second] = join_table;
+        binder_context.add_table_alias(relations.join_relations[j].second.c_str(), join_table);
       }
 
       FilterStmt *on_filter = nullptr;
@@ -109,7 +119,7 @@ static RC process_from_clause(Db *db, vector<Table *> &tables, unordered_map<str
           return rc;
         }
       }
-      jt.push_join_table(table_map[join_table_name], on_filter);
+      jt.push_join_table(join_table, on_filter);
     }
     relations.conditions.clear();
     join_tables.push_back(std::move(jt));

@@ -120,7 +120,7 @@ RC PhysicalPlanGenerator::create_plan(UpdateLogicalOperator &update_oper, unique
     }
   }
 
-  oper = unique_ptr<PhysicalOperator>(new UpdatePhysicalOperator(update_oper.table(), update_oper.field_meta(), update_oper.value()));
+  oper = unique_ptr<PhysicalOperator>(new UpdatePhysicalOperator(update_oper.table(), update_oper.field_metas(), update_oper.values()));
   if (child_physical_oper) {
     oper->add_child(std::move(child_physical_oper));
   }
@@ -310,10 +310,16 @@ RC PhysicalPlanGenerator::create_plan(ProjectLogicalOperator &project_oper, uniq
 
 RC PhysicalPlanGenerator::create_plan(InsertLogicalOperator &insert_oper, unique_ptr<PhysicalOperator> &oper, Session* session)
 {
-  Table                  *table           = insert_oper.table();
-  vector<Value>          &values          = insert_oper.values();
-  InsertPhysicalOperator *insert_phy_oper = new InsertPhysicalOperator(table, std::move(values));
-  oper.reset(insert_phy_oper);
+  Table *table = insert_oper.table();
+  if (insert_oper.is_batch()) {
+    vector<vector<Value>> value_rows = insert_oper.value_rows();
+    InsertPhysicalOperator *insert_phy_oper = new InsertPhysicalOperator(table, std::move(value_rows));
+    oper.reset(insert_phy_oper);
+  } else {
+    vector<Value> &values = insert_oper.values();
+    InsertPhysicalOperator *insert_phy_oper = new InsertPhysicalOperator(table, std::move(values));
+    oper.reset(insert_phy_oper);
+  }
   return RC::SUCCESS;
 }
 

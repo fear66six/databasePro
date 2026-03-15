@@ -98,10 +98,15 @@ void LogicalInsertToInsert::transform(OperatorNode* input,
                          OptimizerContext *context) const {
   InsertLogicalOperator* insert_oper = dynamic_cast<InsertLogicalOperator*>(input);
 
-  Table                  *table           = insert_oper->table();
-  vector<Value>          &values          = insert_oper->values();
-  auto insert_phy_oper = make_unique<InsertPhysicalOperator>(table, std::move(values));
-
+  Table *table = insert_oper->table();
+  unique_ptr<InsertPhysicalOperator> insert_phy_oper;
+  if (insert_oper->is_batch()) {
+    vector<vector<Value>> value_rows = insert_oper->value_rows();
+    insert_phy_oper = make_unique<InsertPhysicalOperator>(table, std::move(value_rows));
+  } else {
+    vector<Value> values = insert_oper->values();
+    insert_phy_oper = make_unique<InsertPhysicalOperator>(table, std::move(values));
+  }
   transformed->emplace_back(std::move(insert_phy_oper));
 }
 
@@ -191,7 +196,7 @@ void LogicalUpdateToUpdate::transform(OperatorNode *input,
   auto update_oper = dynamic_cast<UpdateLogicalOperator *>(input);
 
   auto update_phys_oper = unique_ptr<PhysicalOperator>(
-      new UpdatePhysicalOperator(update_oper->table(), update_oper->field_meta(), update_oper->value()));
+      new UpdatePhysicalOperator(update_oper->table(), update_oper->field_metas(), update_oper->values()));
   for (auto &child : update_oper->children()) {
     update_phys_oper->add_general_child(child.get());
   }

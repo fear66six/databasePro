@@ -28,8 +28,8 @@ class FieldMeta;
 class CreateIndexStmt : public Stmt
 {
 public:
-  CreateIndexStmt(Table *table, const vector<const FieldMeta *> &field_metas, const string &index_name)
-      : table_(table), field_metas_(field_metas), index_name_(index_name)
+  CreateIndexStmt(Table *table, const vector<const FieldMeta *> &field_metas, const string &index_name, bool unique = false)
+      : table_(table), field_metas_(field_metas), index_name_(index_name), unique_(unique)
   {}
 
   virtual ~CreateIndexStmt() = default;
@@ -39,6 +39,7 @@ public:
   Table                            *table() const { return table_; }
   const vector<const FieldMeta *>   &field_metas() const { return field_metas_; }
   const string                     &index_name() const { return index_name_; }
+  bool                              unique() const { return unique_; }
 
   /// 兼容单字段接口，返回第一个字段
   const FieldMeta *field_meta() const { return field_metas_.empty() ? nullptr : field_metas_[0]; }
@@ -50,4 +51,5 @@ private:
   Table                         *table_       = nullptr;
   vector<const FieldMeta *>      field_metas_;
   string                         index_name_;
+  bool                           unique_      = false;
 };

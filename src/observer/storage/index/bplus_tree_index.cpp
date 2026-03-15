@@ -31,7 +31,8 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
   Index::init(index_meta, field_meta);
 
   BufferPoolManager &bpm = table->db()->buffer_pool_manager();
-  RC rc = index_handler_.create(table->db()->log_handler(), bpm, file_name, field_meta.type(), field_meta.len());
+  RC rc = index_handler_.create(table->db()->log_handler(), bpm, file_name, field_meta.type(), field_meta.len(),
+      -1, -1, index_meta.unique());
   if (RC::SUCCESS != rc) {
     LOG_WARN("Failed to create index_handler, file_name:%s, index:%s, field:%s, rc:%s",
         file_name, index_meta.name(), index_meta.field(), strrc(rc));
@@ -77,7 +78,8 @@ RC BplusTreeIndex::create(Table *table, const char *file_name, const IndexMeta &
     return rc;
   }
 
-  rc = index_handler_.create(table->db()->log_handler(), *bp, span<const std::pair<AttrType, int>>(fields.data(), fields.size()));
+  rc = index_handler_.create(table->db()->log_handler(), *bp, span<const std::pair<AttrType, int>>(fields.data(), fields.size()),
+      -1, -1, index_meta.unique());
   if (RC::SUCCESS != rc) {
     bpm.close_file(file_name);
     LOG_WARN("Failed to create index_handler, file_name:%s, index:%s, rc:%s",
