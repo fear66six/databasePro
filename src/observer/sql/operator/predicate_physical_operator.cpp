@@ -51,15 +51,23 @@ RC PredicatePhysicalOperator::next()
       break;
     }
 
+    const Tuple *eval_tuple = tuple;
+    if (parent_tuple_ != nullptr) {
+      combined_tuple_.set_left(const_cast<Tuple *>(parent_tuple_));
+      combined_tuple_.set_right(tuple);
+      eval_tuple = &combined_tuple_;
+    }
+
     Value value;
-    rc = expression_->get_value(*tuple, value);
+    rc = expression_->get_value(*eval_tuple, value);
     if (rc != RC::SUCCESS) {
       return rc;
     }
 
-    if (value.get_boolean()) {
-      return rc;
+    if (value.is_null() || !value.get_boolean()) {
+      continue;
     }
+    return rc;
   }
   return rc;
 }

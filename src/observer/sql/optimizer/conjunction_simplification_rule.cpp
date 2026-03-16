@@ -14,6 +14,7 @@ See the Mulan PSL v2 for more details. */
 
 #include "sql/optimizer/conjunction_simplification_rule.h"
 #include "common/log/log.h"
+#include "common/value.h"
 #include "sql/expr/expression.h"
 
 RC try_to_get_bool_constant(unique_ptr<Expression> &expr, bool &constant_value)
@@ -22,6 +23,15 @@ RC try_to_get_bool_constant(unique_ptr<Expression> &expr, bool &constant_value)
     auto value_expr = static_cast<ValueExpr *>(expr.get());
     constant_value  = value_expr->get_value().get_boolean();
     return RC::SUCCESS;
+  }
+  // 支持可折叠为布尔常量的比较表达式，如 1=0、1=1
+  if (expr->type() == ExprType::COMPARISON) {
+    auto *cmp_expr = static_cast<ComparisonExpr *>(expr.get());
+    Value value;
+    if (cmp_expr->try_get_value(value) == RC::SUCCESS && value.attr_type() == AttrType::BOOLEANS) {
+      constant_value = value.get_boolean();
+      return RC::SUCCESS;
+    }
   }
   return RC::INTERNAL;
 }
@@ -53,19 +63,19 @@ RC ConjunctionSimplificationRule::rewrite(unique_ptr<Expression> &expr, bool &ch
       if (constant_value == true) {
         child_exprs.erase(iter);
       } else {
-        // always be false
-        unique_ptr<Expression> child_expr = std::move(child_exprs.front());
+        // AND with constant false: whole expression is false
         child_exprs.clear();
-        expr = std::move(child_expr);
+        expr = unique_ptr<Expression>(new ValueExpr(Value(false)));
+        change_made = true;
         return rc;
       }
     } else {
       // conjunction_type == OR
       if (constant_value == true) {
-        // always be true
-        unique_ptr<Expression> child_expr = std::move(child_exprs.front());
+        // OR with constant true: whole expression is true
         child_exprs.clear();
-        expr = std::move(child_expr);
+        expr = unique_ptr<Expression>(new ValueExpr(Value(true)));
+        change_made = true;
         return rc;
       } else {
         child_exprs.erase(iter);

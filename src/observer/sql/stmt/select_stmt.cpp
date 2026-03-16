@@ -138,6 +138,11 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt,
 
   BinderContext binder_context;
 
+  // 相关子查询：将外层表加入 binder_context，以便解析 CSQ_1.FEAT1 等引用
+  for (const auto &p : parent_table_map) {
+    binder_context.add_table(p.second);
+  }
+
   vector<Table *>                tables;
   unordered_map<string, Table *> table_map(parent_table_map.begin(), parent_table_map.end());
   vector<JoinTables>             join_tables;

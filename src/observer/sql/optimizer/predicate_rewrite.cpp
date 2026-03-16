@@ -39,7 +39,8 @@ RC PredicateRewriteRule::rewrite(unique_ptr<LogicalOperator> &oper, bool &change
 
   // 如果仅有的一个子节点是predicate
   // 并且这个子节点可以判断为恒为TRUE，那么可以省略这个子节点，并把他的子节点们（就是孙子节点）接管过来
-  // 如果可以判断恒为false，那么就可以删除子节点
+  // 如果可以判断恒为false，不能直接删除子节点：否则父节点（如 GroupBy）会失去唯一子节点，生成物理计划时断言失败。
+  // 保留 Predicate(false)-TableGet 结构，执行时谓词会过滤掉所有行，等价于空结果。
   auto value_expr = static_cast<ValueExpr *>(expr.get());
   bool bool_value = value_expr->get_value().get_boolean();
   if (true == bool_value) {
@@ -49,10 +50,7 @@ RC PredicateRewriteRule::rewrite(unique_ptr<LogicalOperator> &oper, bool &change
     for (auto &grand_child_oper : grand_child_opers) {
       oper->add_child(std::move(grand_child_oper));
     }
-  } else {
-    child_opers.clear();
+    change_made = true;
   }
-
-  change_made = true;
   return RC::SUCCESS;
 }

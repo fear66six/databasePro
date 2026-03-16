@@ -138,6 +138,7 @@ JOIN                                    RETURN_TOKEN(JOIN);
 LENGTH                                  RETURN_TOKEN(LENGTH);
 ROUND                                   RETURN_TOKEN(ROUND);
 DATE_FORMAT                             RETURN_TOKEN(DATE_FORMAT);
+NULL                                    RETURN_TOKEN(NULL_T);
 {ID}                                    yylval->cstring=strdup(yytext); static_cast<std::vector<char*>*>(yyextra)->push_back(yylval->cstring); RETURN_TOKEN(ID);
 "("                                     RETURN_TOKEN(LBRACE);
 ")"                                     RETURN_TOKEN(RBRACE);

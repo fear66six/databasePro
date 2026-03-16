@@ -206,6 +206,9 @@ void Value::set_empty_string(int len)
 void Value::set_value(const Value &value)
 {
   switch (value.attr_type_) {
+    case AttrType::UNDEFINED: {
+      reset();
+    } break;
     case AttrType::INTS: {
       set_int(value.get_int());
     } break;
@@ -251,6 +254,9 @@ char *Value::data() const
 
 string Value::to_string() const
 {
+  if (attr_type_ == AttrType::UNDEFINED) {
+    return "";
+  }
   string res;
   RC     rc = DataType::type_instance(this->attr_type_)->to_string(*this, res);
   if (OB_FAIL(rc)) {
@@ -262,6 +268,9 @@ string Value::to_string() const
 
 int Value::compare(const Value &other) const
 {
+  if (attr_type_ == AttrType::UNDEFINED || other.attr_type() == AttrType::UNDEFINED) {
+    return INT32_MAX;
+  }
   if (attr_type_ == AttrType::DATES && other.attr_type() == AttrType::CHARS) {
     return DataType::type_instance(AttrType::DATES)->compare(*this, other);
   }

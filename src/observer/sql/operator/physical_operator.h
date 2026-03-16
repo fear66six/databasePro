@@ -91,6 +91,18 @@ public:
 
   vector<unique_ptr<PhysicalOperator>> &children() { return children_; }
 
+  /// 相关子查询：设置外层 tuple，递归传播到所有子算子
+  void set_parent_tuple(const Tuple *tuple)
+  {
+    parent_tuple_ = tuple;
+    for (auto &child : children_) {
+      child->set_parent_tuple(tuple);
+    }
+  }
+
+  const Tuple *get_parent_tuple() const { return parent_tuple_; }
+
 protected:
   vector<unique_ptr<PhysicalOperator>> children_;
+  const Tuple *parent_tuple_ = nullptr;
 };

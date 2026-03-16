@@ -211,6 +211,11 @@ RC ComparisonExpr::compare_value(const Value &left, const Value &right, bool &re
 {
   RC rc = RC::SUCCESS;
 
+  if (value_is_null(left) || value_is_null(right)) {
+    result = false;
+    return RC::SUCCESS;
+  }
+
   if (comp_ == LIKE_OP || comp_ == NOT_LIKE_OP) {
     if (left.attr_type() != AttrType::CHARS || right.attr_type() != AttrType::CHARS) {
       LOG_WARN("[NOT_]LIKE_OP requires both operands to be CHARS type");
@@ -291,8 +296,13 @@ RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
     if (!subquery) {
       return RC::INVALID_ARGUMENT;
     }
-    subquery->open(subquery->get_trx());
-    RC rc = right_->get_value(tuple, value);
+    subquery->set_parent_tuple_on_plan(&tuple);
+    rc = subquery->open(subquery->get_trx());
+    if (rc != RC::SUCCESS) {
+      subquery->close();
+      return rc;
+    }
+    rc = right_->get_value(tuple, value);
     subquery->close();
     if (rc == RC::RECORD_EOF) {
       value.set_boolean(comp_ == NOT_EXISTS_OP);
@@ -321,11 +331,16 @@ RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
       return RC::INVALID_ARGUMENT;
     }
     if (subquery) {
-      subquery->open(subquery->get_trx());
+      subquery->set_parent_tuple_on_plan(&tuple);
+      rc = subquery->open(subquery->get_trx());
+      if (rc != RC::SUCCESS) {
+        subquery->close();
+        return rc;
+      }
     } else {
       vlist->reset();
     }
-    bool found = false;
+    bool found   = false;
     bool has_null = false;
     Value right_value;
     while (RC::SUCCESS == (rc = right_->get_value(tuple, right_value))) {
@@ -333,6 +348,9 @@ RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
         has_null = true;
       } else if (left_value.compare(right_value) == 0) {
         found = true;
+        if (comp_ == IN_OP) {
+          break;  // IN: early exit when match found
+        }
       }
     }
     if (subquery) {
@@ -341,6 +359,7 @@ RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
     if (rc != RC::RECORD_EOF && rc != RC::SUCCESS) {
       return rc;
     }
+    // NOT IN semantics: empty set -> true; has NULL -> false; else -> !found
     value.set_boolean(comp_ == IN_OP ? found : (has_null ? false : !found));
     return RC::SUCCESS;
   }
@@ -351,17 +370,22 @@ RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
   SubQueryExpr *right_subquery = (right_->type() == ExprType::SUBQUERY) ? static_cast<SubQueryExpr *>(right_.get()) : nullptr;
 
   if (left_subquery) {
-    left_subquery->open(left_subquery->get_trx());
+    left_subquery->set_parent_tuple_on_plan(&tuple);
+    rc = left_subquery->open(left_subquery->get_trx());
+    if (rc != RC::SUCCESS) {
+      left_subquery->close();
+      return rc;
+    }
   }
   rc = left_->get_value(tuple, left_value);
   if (left_subquery) {
     if (rc == RC::RECORD_EOF) {
-      left_value.set_type(AttrType::UNDEFINED);
+      left_value.set_null();
       rc = RC::SUCCESS;
     }
     if (left_subquery->has_more_row(tuple)) {
       left_subquery->close();
-      return RC::INVALID_ARGUMENT;
+      return RC::INVALID_ARGUMENT;  // 标量子查询返回多行，= 只能匹配单值，必须 FAILURE
     }
     left_subquery->close();
   }
@@ -370,17 +394,22 @@ RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
   }
 
   if (right_subquery) {
-    right_subquery->open(right_subquery->get_trx());
+    right_subquery->set_parent_tuple_on_plan(&tuple);
+    rc = right_subquery->open(right_subquery->get_trx());
+    if (rc != RC::SUCCESS) {
+      right_subquery->close();
+      return rc;
+    }
   }
   rc = right_->get_value(tuple, right_value);
   if (right_subquery) {
     if (rc == RC::RECORD_EOF) {
-      right_value.set_type(AttrType::UNDEFINED);
+      right_value.set_null();
       rc = RC::SUCCESS;
     }
     if (right_subquery->has_more_row(tuple)) {
       right_subquery->close();
-      return RC::INVALID_ARGUMENT;
+      return RC::INVALID_ARGUMENT;  // 标量子查询返回多行，只能 0 或 1 行，必须 FAILURE
     }
     right_subquery->close();
   }
@@ -388,7 +417,7 @@ RC ComparisonExpr::get_value(const Tuple &tuple, Value &value) const
     return rc;
   }
 
-  if ((left_subquery || right_subquery) && (value_is_null(left_value) || value_is_null(right_value))) {
+  if ((left_subquery || right_subquery) && (left_value.is_null() || right_value.is_null())) {
     value.set_boolean(false);
     return RC::SUCCESS;
   }

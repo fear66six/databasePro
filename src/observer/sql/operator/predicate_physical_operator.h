@@ -43,4 +43,5 @@ public:
 
 private:
   unique_ptr<Expression> expression_;
+  mutable JoinedTuple    combined_tuple_;
 };

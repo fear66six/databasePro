@@ -80,4 +80,5 @@ private:
   Record                         current_record_;
   RowTuple                       tuple_;
   vector<unique_ptr<Expression>> predicates_;  // TODO chang predicate to table tuple filter
+  mutable JoinedTuple          combined_tuple_;
 };

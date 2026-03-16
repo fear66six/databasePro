@@ -18,6 +18,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/expr/expression_iterator.h"
 #include "sql/operator/logical_operator.h"
 #include "sql/operator/table_get_logical_operator.h"
+#include <strings.h>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -86,7 +87,8 @@ RC PredicatePushdownRewriter::rewrite(unique_ptr<LogicalOperator> &oper, bool &c
   if (child_oper->type() == LogicalOperatorType::TABLE_GET) {
     auto table_get_oper = static_cast<TableGetLogicalOperator *>(child_oper.get());
     vector<unique_ptr<Expression>> pushdown_exprs;
-    rc = get_exprs_can_pushdown(predicate_expr, pushdown_exprs);
+    const char *table_name = table_get_oper->table() != nullptr ? table_get_oper->table()->name() : nullptr;
+    rc = get_exprs_can_pushdown(predicate_expr, pushdown_exprs, table_name);
     if (rc != RC::SUCCESS) {
       LOG_WARN("failed to get pushdown expressions. rc=%s", strrc(rc));
       return rc;
@@ -132,9 +134,14 @@ RC PredicatePushdownRewriter::rewrite(unique_ptr<LogicalOperator> &oper, bool &c
 
       if (tables.size() == 1) {
         string table_name = *tables.begin();
-        auto it = table_map.find(table_name);
-        if (it != table_map.end()) {
-          TableGetLogicalOperator *table_get = it->second;
+        TableGetLogicalOperator *table_get = nullptr;
+        for (auto &kv : table_map) {
+          if (strcasecmp(kv.first.c_str(), table_name.c_str()) == 0) {
+            table_get = kv.second;
+            break;
+          }
+        }
+        if (table_get != nullptr) {
           table_get->predicates().push_back(std::move(conjunct));
           any_pushed = true;
         }
@@ -182,17 +189,16 @@ bool PredicatePushdownRewriter::is_empty_predicate(unique_ptr<Expression> &expr)
  * @param expr 是当前的表达式。如果可以下放给table get 算子，执行完成后expr就失效了
  * @param pushdown_exprs 当前所有要下放给table get 算子的filter。此函数执行多次，
  *                       pushdown_exprs 只会增加，不要做清理操作
+ * @param table_name 目标表名，用于过滤相关子查询谓词（引用外层表的谓词不下推）
  */
 RC PredicatePushdownRewriter::get_exprs_can_pushdown(
-    unique_ptr<Expression> &expr, vector<unique_ptr<Expression>> &pushdown_exprs)
+    unique_ptr<Expression> &expr, vector<unique_ptr<Expression>> &pushdown_exprs, const char *table_name)
 {
   RC rc = RC::SUCCESS;
   if (expr->type() == ExprType::CONJUNCTION) {
     ConjunctionExpr *conjunction_expr = static_cast<ConjunctionExpr *>(expr.get());
-    // 或 操作的比较，太复杂，现在不考虑
+    // OR 谓词不下推，保留在 Predicate 层执行
     if (conjunction_expr->conjunction_type() == ConjunctionExpr::Type::OR) {
-      LOG_WARN("unsupported or operation");
-      rc = RC::UNIMPLEMENTED;
       return rc;
     }
 
@@ -200,7 +206,7 @@ RC PredicatePushdownRewriter::get_exprs_can_pushdown(
     for (auto iter = child_exprs.begin(); iter != child_exprs.end();) {
       // 对每个子表达式，判断是否可以下放到table get 算子
       // 如果可以的话，就从当前孩子节点中删除他
-      rc = get_exprs_can_pushdown(*iter, pushdown_exprs);
+      rc = get_exprs_can_pushdown(*iter, pushdown_exprs, table_name);
       if (rc != RC::SUCCESS) {
       LOG_WARN("failed to get pushdown expressions. rc=%s", strrc(rc));
       return rc;
@@ -213,8 +219,22 @@ RC PredicatePushdownRewriter::get_exprs_can_pushdown(
       }
     }
   } else if (expr->type() == ExprType::COMPARISON) {
-    // 如果是比较操作，并且比较的左边或右边是表某个列值，那么就下推下去
-
+    // 含子查询的谓词不下推，避免相关子查询在 TableScan 中无法正确获取 outer tuple
+    bool has_subquery = false;
+    ExpressionIterator::for_each_subquery(*expr, [&has_subquery](SubQueryExpr &) { has_subquery = true; });
+    if (has_subquery) {
+      return rc;
+    }
+    // 相关子查询谓词不下推：引用非目标表的谓词需保留在 Predicate 层，由 parent_tuple 提供外层行
+    if (table_name != nullptr) {
+      unordered_set<string> tables;
+      collect_tables_in_expr(expr.get(), tables);
+      for (const string &t : tables) {
+        if (strcasecmp(t.c_str(), table_name) != 0) {
+          return rc;  // 引用外层表，不下推
+        }
+      }
+    }
     pushdown_exprs.emplace_back(std::move(expr));
   }
   return rc;

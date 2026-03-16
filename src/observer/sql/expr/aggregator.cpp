@@ -78,8 +78,8 @@ RC AvgAggregator::accumulate(const Value &value)
 
 RC AvgAggregator::evaluate(Value &result)
 {
-  result.set_float(0.0f);
   if (count_ == 0) {
+    result.reset();  // AVG 空集返回 NULL，符合 SQL 语义
     return RC::SUCCESS;
   }
   // 参考 database_project：用 get_float() 做除法，result = sum / count

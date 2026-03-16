@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include "storage/db/db.h"
 
 #include <fcntl.h>
+#include <strings.h>
 #include <sys/stat.h>
 
 #include "common/lang/string.h"
@@ -254,6 +255,12 @@ Table *Db::find_table(const char *table_name) const
   unordered_map<string, Table *>::const_iterator iter = opened_tables_.find(table_name);
   if (iter != opened_tables_.end()) {
     return iter->second;
+  }
+  // 大小写不敏感查找：SQL 标识符通常不区分大小写
+  for (const auto &pair : opened_tables_) {
+    if (0 == strcasecmp(table_name, pair.first.c_str())) {
+      return pair.second;
+    }
   }
   return nullptr;
 }

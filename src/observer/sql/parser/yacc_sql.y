@@ -194,6 +194,7 @@ Expression *create_func_expr(FunctionExpr::Type func_type,
 %token <floats> FLOAT
 %token <cstring> ID
 %token <cstring> SSS
+%token NULL_T
 //非终结符
 
 /** type 定义了各种解析后的结果输出的是什么类型。类型对应了 union 中的定义的成员变量名称 **/
@@ -225,6 +226,7 @@ Expression *create_func_expr(FunctionExpr::Type func_type,
 %type <expression>          func_expr
 %type <expression>          sub_query_expr
 %type <expression_list>     expression_list
+%type <expression_list>     group_by_list
 %type <expression_list>     group_by
 %type <cstring>             fields_terminated_by
 %type <cstring>             enclosed_by
@@ -253,11 +255,13 @@ Expression *create_func_expr(FunctionExpr::Type func_type,
 // commands should be a list but I use a single command instead
 %type <sql_node>            commands
 
+%nonassoc ID
 %left OR
 %left AND
 %left '+' '-'
 %left '*' '/'
 %right UMINUS
+%precedence LBRACE
 %%
 
 commands: command_wrapper opt_semicolon  //commands or sqls. parser starts here.
@@ -499,10 +503,11 @@ insert_stmt:        /*insert   语句的语法解析树*/
     ;
 
 value_list_groups:
-    LBRACE value_list RBRACE
+    LBRACE value_list RBRACE COMMA LBRACE value_list RBRACE
     {
       $$ = new vector<vector<Value> *>();
       $$->push_back($2);
+      $$->push_back($6);
     }
     | value_list_groups COMMA LBRACE value_list RBRACE
     {
@@ -537,6 +542,11 @@ value:
       char *tmp = common::substr($1,1,strlen($1)-2);
       $$ = new Value(tmp);
       free(tmp);
+    }
+    | NULL_T {
+      $$ = new Value();
+      $$->set_null();
+      @$ = @1;
     }
     ;
 storage_format:
@@ -645,14 +655,14 @@ expression_list:
       $$ = new vector<unique_ptr<Expression>>;
       $$->emplace_back($1);
     }
-    | expression COMMA expression_list
+    | expression_list COMMA expression
     {
-      if ($3 != nullptr) {
-        $$ = $3;
+      if ($1 != nullptr) {
+        $$ = $1;
       } else {
         $$ = new vector<unique_ptr<Expression>>;
       }
-      $$->emplace($$->begin(), $1);
+      $$->emplace_back($3);
     }
     ;
 expression:
@@ -678,27 +688,27 @@ expression:
     | '*' {
       $$ = new StarExpr();
     }
-    | value {
+    | value %prec UMINUS {
       $$ = new ValueExpr(*$1);
       $$->set_name(token_name(sql_string, &@$));
       delete $1;
     }
-    | rel_attr {
+    | rel_attr %prec UMINUS {
       RelAttrSqlNode *node = $1;
       $$ = new UnboundFieldExpr(node->relation_name, node->attribute_name);
       $$->set_name(token_name(sql_string, &@$));
       delete $1;
     }
-    | aggregate_expression {
+    | aggregate_expression %prec UMINUS {
       $$ = $1;
     }
-    | func_expr {
+    | func_expr %prec UMINUS {
       $$ = $1;
     }
-    | sub_query_expr {
+    | sub_query_expr %prec UMINUS {
       $$ = $1;
     }
-    | expression ID {
+    | expression ID %prec ID {
       $$ = $1;
       $$->set_name($2);
     }
@@ -778,19 +788,19 @@ condition_expr:
     | expression comp_op expression {
       $$ = new ComparisonExpr($2, unique_ptr<Expression>($1), unique_ptr<Expression>($3));
     }
-    | expression IN LBRACE select_stmt RBRACE {
+    | expression IN LBRACE select_stmt RBRACE %prec LBRACE {
       $$ = new ComparisonExpr(IN_OP, unique_ptr<Expression>($1), unique_ptr<Expression>(new SubQueryExpr($4->selection)));
       delete $4;
     }
-    | expression NOT IN LBRACE select_stmt RBRACE {
+    | expression NOT IN LBRACE select_stmt RBRACE %prec LBRACE {
       $$ = new ComparisonExpr(NOT_IN_OP, unique_ptr<Expression>($1), unique_ptr<Expression>(new SubQueryExpr($5->selection)));
       delete $5;
     }
-    | expression IN LBRACE expression_list RBRACE {
+    | expression IN LBRACE expression_list RBRACE %prec LBRACE {
       $$ = new ComparisonExpr(IN_OP, unique_ptr<Expression>($1), unique_ptr<Expression>(new ValueListExpr(std::move(*$4))));
       delete $4;
     }
-    | expression NOT IN LBRACE expression_list RBRACE {
+    | expression NOT IN LBRACE expression_list RBRACE %prec LBRACE {
       $$ = new ComparisonExpr(NOT_IN_OP, unique_ptr<Expression>($1), unique_ptr<Expression>(new ValueListExpr(std::move(*$5))));
       delete $5;
     }
@@ -849,11 +859,6 @@ from_node:
       $$->base_relation.second = $2;
       std::reverse($$->join_relations.begin(), $$->join_relations.end());
       std::reverse($$->conditions.begin(), $$->conditions.end());
-    }
-    | ID ID {
-      $$ = new InnerJoinSqlNode;
-      $$->base_relation.first = $1;
-      $$->base_relation.second = $2;
     }
     | ID join_list {
       if (nullptr != $2) {
@@ -984,12 +989,29 @@ exists_op:
     ;
 
 // your code here
+group_by_list:
+    expression
+    {
+      $$ = new vector<unique_ptr<Expression>>;
+      $$->emplace_back($1);
+    }
+    | group_by_list COMMA expression
+    {
+      if ($1 != nullptr) {
+        $$ = $1;
+      } else {
+        $$ = new vector<unique_ptr<Expression>>;
+      }
+      $$->emplace_back($3);
+    }
+    ;
+
 group_by:
     /* empty */
     {
       $$ = nullptr;
     }
-    | GROUP BY expression_list
+    | GROUP BY group_by_list
     {
       // group by 的表达式范围与select查询值的表达式范围是不同的，比如group by不支持 *
       // 但是这里没有处理。

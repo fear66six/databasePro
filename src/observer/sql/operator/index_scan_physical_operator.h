@@ -62,4 +62,5 @@ private:
   bool  right_inclusive_ = false;
 
   vector<unique_ptr<Expression>> predicates_;
+  mutable JoinedTuple          combined_tuple_;
 };

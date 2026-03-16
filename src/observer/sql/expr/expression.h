@@ -683,10 +683,19 @@ public:
   RC generate_logical_oper();
   RC generate_physical_oper(Session *session);
 
+  void set_parent_tuple_on_plan(const Tuple *tuple) const;
+  const Tuple *get_parent_tuple_from_plan() const;
+
+  void set_parent(SubQueryExpr *p) { parent_ = p; }
+
 private:
+  const Tuple *resolve_parent_tuple(const Tuple &tuple) const;
+  void bind_nested_subquery_parents();
+
   unique_ptr<SelectSqlNode>    sql_node_;
   unique_ptr<SelectStmt>       stmt_;
   unique_ptr<LogicalOperator>  logical_oper_;
   mutable unique_ptr<PhysicalOperator> physical_oper_;
-  mutable Trx *               trx_ = nullptr;
+  mutable Trx *      trx_ = nullptr;
+  SubQueryExpr *     parent_ = nullptr;  // 嵌套子查询时，内层使用父层的 parent_tuple
 };

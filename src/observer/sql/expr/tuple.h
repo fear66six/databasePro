@@ -20,6 +20,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/parser/parse.h"
 #include "common/value.h"
 #include "storage/record/record.h"
+#include <strings.h>
 
 class Table;
 
@@ -213,14 +214,20 @@ public:
   {
     const char *table_name = spec.table_name();
     const char *field_name = spec.field_name();
-    if (0 != strcmp(table_name, table_->name())) {
+    if (field_name == nullptr) {
+      return RC::NOTFOUND;
+    }
+    // 无表前缀或表名匹配时查找字段
+    const bool table_ok = (table_name == nullptr || table_name[0] == '\0' ||
+        (table_->name() != nullptr && 0 == strcasecmp(table_name, table_->name())));
+    if (!table_ok) {
       return RC::NOTFOUND;
     }
 
     for (size_t i = 0; i < speces_.size(); ++i) {
       const FieldExpr *field_expr = speces_[i];
       const Field     &field      = field_expr->field();
-      if (0 == strcmp(field_name, field.field_name())) {
+      if (0 == strcasecmp(field_name, field.field_name())) {
         return cell_at(i, cell);
       }
     }
@@ -336,6 +343,9 @@ public:
     if (index < 0 || index >= cell_num()) {
       return RC::NOTFOUND;
     }
+    if (index >= static_cast<int>(specs_.size())) {
+      return RC::NOTFOUND;
+    }
 
     spec = specs_[index];
     return RC::SUCCESS;
@@ -343,7 +353,9 @@ public:
 
   virtual RC find_cell(const TupleCellSpec &spec, Value &cell) const override
   {
-    ASSERT(cells_.size() == specs_.size(), "cells_.size()=%d, specs_.size()=%d", cells_.size(), specs_.size());
+    if (cells_.size() != specs_.size()) {
+      return RC::NOTFOUND;
+    }
 
     const int size = static_cast<int>(specs_.size());
     for (int i = 0; i < size; i++) {

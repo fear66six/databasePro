@@ -13,6 +13,7 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include "sql/operator/index_scan_physical_operator.h"
+#include "sql/expr/expression.h"
 #include "sql/expr/expression_iterator.h"
 #include "storage/index/index.h"
 #include "storage/trx/trx.h"
@@ -139,8 +140,14 @@ RC IndexScanPhysicalOperator::filter(RowTuple &tuple, bool &result)
 {
   RC    rc = RC::SUCCESS;
   Value value;
+  const Tuple *eval_tuple = &tuple;
+  if (parent_tuple_ != nullptr) {
+    combined_tuple_.set_left(const_cast<Tuple *>(parent_tuple_));
+    combined_tuple_.set_right(&tuple);
+    eval_tuple = &combined_tuple_;
+  }
   for (unique_ptr<Expression> &expr : predicates_) {
-    rc = expr->get_value(tuple, value);
+    rc = expr->get_value(*eval_tuple, value);
     if (rc != RC::SUCCESS) {
       return rc;
     }

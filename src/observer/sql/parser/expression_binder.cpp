@@ -178,12 +178,30 @@ RC ExpressionBinder::bind_unbound_field_expression(
 
   Table *table = nullptr;
   if (is_blank(table_name)) {
-    if (context_.query_tables().size() != 1) {
+    const vector<Table *> &tables = context_.query_tables();
+    if (tables.size() == 1) {
+      table = tables[0];
+    } else if (tables.size() > 1) {
+      // 未限定表名且多表：在能包含该字段的表中查找，仅当恰好一个表有该字段时使用
+      Table *found = nullptr;
+      for (Table *t : tables) {
+        if (t->table_meta().field(field_name) != nullptr) {
+          if (found != nullptr) {
+            LOG_INFO("ambiguous column: %s", field_name);
+            return RC::SCHEMA_TABLE_NOT_EXIST;
+          }
+          found = t;
+        }
+      }
+      if (found == nullptr) {
+        LOG_INFO("cannot determine table for field: %s", field_name);
+        return RC::SCHEMA_TABLE_NOT_EXIST;
+      }
+      table = found;
+    } else {
       LOG_INFO("cannot determine table for field: %s", field_name);
       return RC::SCHEMA_TABLE_NOT_EXIST;
     }
-
-    table = context_.query_tables()[0];
   } else {
     table = context_.find_table(table_name);
     if (nullptr == table) {
@@ -198,15 +216,16 @@ RC ExpressionBinder::bind_unbound_field_expression(
   } else {
     const FieldMeta *field_meta = table->table_meta().field(field_name);
     if (nullptr == field_meta) {
-      LOG_INFO("no such field in table: %s.%s", table_name, field_name);
+      LOG_INFO("no such field in table: %s.%s", table->name(), field_name);
       return RC::SCHEMA_FIELD_MISSING;
     }
 
     Field      field(table, field_meta);
     FieldExpr *field_expr = new FieldExpr(field);
-    if (!is_blank(table_name) && context_.query_tables().size() > 1) {
-      std::string qualified = std::string(table_name) + "." + field_name;
-      field_expr->set_name(qualified);
+    if (context_.query_tables().size() > 1) {
+      // 有显式表名/别名时用 table_name，否则用 table->name()（未限定字段多表解析）
+      std::string qual = !is_blank(table_name) ? std::string(table_name) : std::string(table->name());
+      field_expr->set_name(qual + "." + field_name);
     } else {
       field_expr->set_name(field_name);
     }
